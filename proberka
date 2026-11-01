@@ -1,7 +1,9 @@
-local webhookUrl = "https://discord.com/api/webhooks/1564766433466912849/wymKnn-UzPAYt9MLsWahCWY4hOM6FEqlozeIMvfhB1o4jD7MbvzP1LGur331jNI6-NSK"
+-- ⚠️ Не публикуй этот URL. Замени на свой.
+local webhookUrl = "https://discord.com/api/webhooks/ТВОЙ_ID/ТВОЙ_ТОКЕН"
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 -- 1. Проверяем окружение: скрипт должен работать на клиенте
 local LocalPlayer = Players.LocalPlayer
@@ -18,23 +20,101 @@ if not jobId or jobId == "" then
     return
 end
 
--- 3. Собираем ссылку для прямого входа на конкретный сервер
+-- 3. Название игры (с защитой от ошибок, если игра недоступна)
+local gameName = "Неизвестная игра"
+pcall(function()
+    gameName = MarketplaceService:GetProductInfo(placeId).Name
+end)
+
+-- 4. Определение исполнителя (инжектора)
+--    Проверяем известные глобальные переменные эксплойтов.
+local function detectExecutor()
+    local checks = {
+        { name = "Synapse X",        test = function() return syn and syn.request end },
+        { name = "Script-Ware",      test = function() return (typeof(script) == "userdata" and getscriptbytecode) end },
+        { name = "Krnl",             test = function() return Krnl and Krnl.Loadstring end },
+        { name = "Fluxus",           test = function() return Fluxus and Fluxus.request end },
+        { name = "Delta",            test = function() return Delta and Delta.Executor end },
+        { name = "AWP",              test = function() return AWP and AWP.Request end },
+        { name = "Sirius",           test = function() return Sirius and Sirius.request end },
+        { name = "Electron",         test = function() return Electron and Electron.request end },
+        { name = "Solara",           test = function() return Solara and Solara.Request end },
+        { name = "Wave",             test = function() return Wave and Wave.request end },
+        { name = "Codex",            test = function() return Codex and Codex.request end },
+        { name = "Hydrogen",         test = function() return Hydrogen and Hydrogen.request end },
+        { name = "Nihon",            test = function() return Nihon and Nihon.request end },
+        { name = "Valyse",           test = function() return Valyse and Valyse.request end },
+        { name = "Vega",             test = function() return Vega and Vega.request end },
+        { name = "Xeno",             test = function() return Xeno and Xeno.request end },
+        { name = "Swift",            test = function() return Swift and Swift.request end },
+        { name = "Argon",            test = function() return Argon and Argon.request end },
+    }
+
+    for _, check in ipairs(checks) do
+        local ok, result = pcall(check.test)
+        if ok and result then
+            return check.name
+        end
+    end
+
+    -- Fallback: пытаемся вытащить имя из identity/executor
+    local ok, name = pcall(function()
+        return (identifyexecutor and identifyexecutor()) or "Неизвестный исполнитель"
+    end)
+    if ok and name then
+        return name
+    end
+
+    return "Неизвестный исполнитель"
+end
+
+local executorName = detectExecutor()
+
+-- 5. Собираем ссылку для прямого входа на конкретный сервер
 local joinLink = string.format(
     "https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
     placeId, jobId
 )
 
--- 4. Формируем payload (имя экранируется JSONEncode автоматически)
+-- 6. Формируем embed-сообщение
 local payload = {
-    content = string.format(
-        "**%s** в игре, нажми на ссылку чтобы присоединиться:\n%s",
-        LocalPlayer.Name, joinLink
-    ),
+    username = "Roblox Logger",
+    embeds = {
+        {
+            title = "🎮 Игрок в игре",
+            description = string.format("**%s** присоединился к игре", LocalPlayer.Name),
+            color = 0x5865F2, -- Discord blurple
+            fields = {
+                {
+                    name = "🕹️ Игра",
+                    value = string.format("**%s**\n`PlaceId: %d`", gameName, placeId),
+                    inline = false
+                },
+                {
+                    name = "⚙️ Исполнитель",
+                    value = string.format("**%s**", executorName),
+                    inline = true
+                },
+                {
+                    name = "🔗 Сервер",
+                    value = string.format("[Присоединиться](%s)", joinLink),
+                    inline = true
+                },
+                {
+                    name = "👤 Игрок",
+                    value = string.format("**%s** (`%d`)", LocalPlayer.Name, LocalPlayer.UserId),
+                    inline = false
+                }
+            },
+            footer = { text = "Roblox Webhook Logger" },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }
+    },
     -- Разрешаем только упоминания пользователей, чтобы не пинговали @everyone
     allowed_mentions = { parse = { "users" } }
 }
 
--- 5. Ищем доступную функцию HTTP-запроса (эксплойт-окружение)
+-- 7. Ищем доступную функцию HTTP-запроса (эксплойт-окружение)
 local requestFunc = http_request or request or (syn and syn.request) or (http and http.request)
 
 if not requestFunc then
@@ -42,7 +122,7 @@ if not requestFunc then
     return
 end
 
--- 6. Отправляем с обработкой ошибок
+-- 8. Отправляем с обработкой ошибок
 local ok, response = pcall(function()
     return requestFunc({
         Url = webhookUrl,
@@ -57,7 +137,7 @@ if not ok then
     return
 end
 
--- 7. Проверяем статус ответа Discord (успех — 204 No Content)
+-- 9. Проверяем статус ответа Discord (успех — 204 No Content)
 local status = response and (response.StatusCode or response.status)
 if status and status >= 200 and status < 300 then
     print("[webhook] Сообщение отправлено.")
