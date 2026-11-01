@@ -1,0 +1,66 @@
+local webhookUrl = "https://discord.com/api/webhooks/1564766433466912849/wymKnn-UzPAYt9MLsWahCWY4hOM6FEqlozeIMvfhB1o4jD7MbvzP1LGur331jNI6-NSK"
+
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+
+-- 1. Проверяем окружение: скрипт должен работать на клиенте
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    warn("[webhook] LocalPlayer недоступен — скрипт запущен не на клиенте.")
+    return
+end
+
+-- 2. Проверяем, что мы в реальной игре, а не в Studio
+local placeId = game.PlaceId
+local jobId = game.JobId
+if not jobId or jobId == "" then
+    warn("[webhook] JobId пуст — вероятно, запущено в Studio. Ссылка не будет работать.")
+    return
+end
+
+-- 3. Собираем ссылку для прямого входа на конкретный сервер
+local joinLink = string.format(
+    "https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
+    placeId, jobId
+)
+
+-- 4. Формируем payload (имя экранируется JSONEncode автоматически)
+local payload = {
+    content = string.format(
+        "**%s** в игре, нажми на ссылку чтобы присоединиться:\n%s",
+        LocalPlayer.Name, joinLink
+    ),
+    -- Разрешаем только упоминания пользователей, чтобы не пинговали @everyone
+    allowed_mentions = { parse = { "users" } }
+}
+
+-- 5. Ищем доступную функцию HTTP-запроса (эксплойт-окружение)
+local requestFunc = http_request or request or (syn and syn.request) or (http and http.request)
+
+if not requestFunc then
+    warn("[webhook] Не найдена функция HTTP-запроса (http_request/request/syn.request). Скрипт работает только в эксплойте.")
+    return
+end
+
+-- 6. Отправляем с обработкой ошибок
+local ok, response = pcall(function()
+    return requestFunc({
+        Url = webhookUrl,
+        Method = "POST",
+        Headers = { ["Content-Type"] = "application/json" },
+        Body = HttpService:JSONEncode(payload)
+    })
+end)
+
+if not ok then
+    warn("[webhook] Ошибка запроса: " .. tostring(response))
+    return
+end
+
+-- 7. Проверяем статус ответа Discord (успех — 204 No Content)
+local status = response and (response.StatusCode or response.status)
+if status and status >= 200 and status < 300 then
+    print("[webhook] Сообщение отправлено.")
+else
+    warn("[webhook] Discord вернул статус: " .. tostring(status))
+end
