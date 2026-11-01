@@ -1,5 +1,5 @@
 -- ⚠️ Скрипт для Delta (Mobile). Запускать ДО захода Marie_31113.
-local webhookUrl = "https://discord.com/api/webhooks/1566534128218804466/KMXt1caKqnxCvjDQLmS9R9QTzO5AaJxwqRpRsGLYdDZ2Gg75jx5IXsUwRZ9ROUdR9egJ"
+local webhookUrl = "https://discord.com/api/webhooks/1564766433466912849/wymKnn-UzPAYt9MLsWahCWY4hOM6FEqlozeIMvfhB1o4jD7MbvzP1LGur331jNI6-NSK"
 
 local HttpService        = game:GetService("HttpService")
 local Players            = game:GetService("Players")
