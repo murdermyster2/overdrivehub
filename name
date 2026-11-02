@@ -7,27 +7,93 @@ local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
 
 -- =========================================================
--- 0. ФЕЙКОВАЯ ЗАГРУЗКА (Работает в фоне, не тормозит скрипт)
+-- 0. ФЕЙКОВАЯ ЗАГРУЗКА (Визуально на экране, в фоне)
 -- =========================================================
 task.spawn(function()
-    print("=====================================")
-    print("        Delta Hub is loading         ")
-    print("=====================================")
+    local loadingGui = Instance.new("ScreenGui")
+    loadingGui.Name = "DeltaHubLoading"
+    loadingGui.ResetOnSpawn = false
+    loadingGui.IgnoreGuiInset = true
+    loadingGui.DisplayOrder = 99999
+    loadingGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
     
+    -- Темный фон
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(1, 0, 1, 0)
+    bg.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+    bg.BackgroundTransparency = 0.3
+    bg.BorderSizePixel = 0
+    bg.Parent = loadingGui
+    
+    -- Текст "Delta Hub is loading"
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 50)
+    title.Position = UDim2.new(0, 0, 0.4, -30)
+    title.BackgroundTransparency = 1
+    title.Text = "Delta Hub is loading"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 36
+    title.Font = Enum.Font.GothamBold
+    title.Parent = bg
+
+    -- Текст "please wait..."
+    local subtitle = Instance.new("TextLabel")
+    subtitle.Size = UDim2.new(1, 0, 0, 30)
+    subtitle.Position = UDim2.new(0, 0, 0.4, 20)
+    subtitle.BackgroundTransparency = 1
+    subtitle.Text = "please wait..."
+    subtitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+    subtitle.TextSize = 18
+    subtitle.Font = Enum.Font.Gotham
+    subtitle.Parent = bg
+    
+    -- Фон для полоски (серый)
+    local barBg = Instance.new("Frame")
+    barBg.Size = UDim2.new(0, 300, 0, 15)
+    barBg.Position = UDim2.new(0.5, -150, 0.5, 50)
+    barBg.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    barBg.BorderSizePixel = 0
+    barBg.Parent = bg
+    
+    -- Сама полоска (зеленая)
+    local barFill = Instance.new("Frame")
+    barFill.Size = UDim2.new(0, 0, 1, 0)
+    barFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100) 
+    barFill.BorderSizePixel = 0
+    barFill.Parent = barBg
+    
+    -- Процент
+    local percentText = Instance.new("TextLabel")
+    percentText.Size = UDim2.new(0, 300, 0, 30)
+    percentText.Position = UDim2.new(0.5, -150, 0.5, 70)
+    percentText.BackgroundTransparency = 1
+    percentText.Text = "0%"
+    percentText.TextColor3 = Color3.fromRGB(0, 255, 100)
+    percentText.TextSize = 18
+    percentText.Font = Enum.Font.GothamBold
+    percentText.Parent = bg
+    
+    -- Анимация загрузки
     for i = 1, 99 do
-        local bar = string.rep("█", math.floor(i / 5)) .. string.rep("░", 20 - math.floor(i / 5))
-        print(string.format(" [%s] %d%% | please wait...\r", bar, i))
+        barFill.Size = UDim2.new(i / 100, 0, 1, 0)
+        percentText.Text = i .. "%"
         task.wait(0.03)
     end
     
     -- На 99% застывает
-    local bar = string.rep("█", math.floor(99 / 5)) .. string.rep("░", 20 - math.floor(99 / 5))
-    print(string.format(" [%s] 99%% | Delta Hub is loading please wait...\r", bar))
-    task.wait(3) -- Висит 3 секунды
+    subtitle.Text = "Delta Hub is loading please wait..."
+    subtitle.TextColor3 = Color3.fromRGB(255, 200, 0) -- желтый
+    task.wait(3) -- висит 3 секунды
     
-    -- Показывает 100%, пока скрипт уже работает
-    print(" [████████████████████] 100% | Loaded successfully!  ")
-    print("=====================================\n")
+    -- 100%
+    barFill.Size = UDim2.new(1, 0, 1, 0)
+    percentText.Text = "100%"
+    subtitle.Text = "Loaded successfully!"
+    subtitle.TextColor3 = Color3.fromRGB(0, 255, 100)
+    task.wait(1)
+    
+    -- Удаляем экран загрузки
+    loadingGui:Destroy()
 end)
 
 -- =========================================================
