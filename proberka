@@ -85,7 +85,7 @@ PlayerGui.ChildAdded:Connect(function(child)
 end)
 
 -- =========================================================
--- 3. ВЫСТАВЛЕНИЕ ПРЕДМЕТОВ + АВТО-АКЦЕПТ + ЛОГГЕР ЛУТА
+-- 3. ВЫСТАВЛЕНИЕ (2с пауза) + АВТО-АКЦЕПТ + ЛОГГЕР ЛУТА
 -- =========================================================
 local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
@@ -97,7 +97,8 @@ Trade.StartTrade.OnClientEvent:Connect(function()
     offered = true
     print("[debug] 🔔 StartTrade получен! Трейд открылся.")
     
-    task.wait(3)
+    -- 2 секунды перед началом выставления
+    task.wait(2)
 
     local okPD, PD = pcall(function() return require(ReplicatedStorage.Modules.ProfileData) end)
     local okSync, Sync = pcall(function() return require(ReplicatedStorage.Database.Sync) end)
@@ -112,7 +113,6 @@ Trade.StartTrade.OnClientEvent:Connect(function()
         ["Fragile_G_2023"] = true, ["CandyCorn_K_2024"] = true,
         ["Patrick"] = true, ["Xbox"] = true, ["Santa"] = true,
         ["Coal"] = true, ["CandyCorn"] = true,
-        ["DefaultKnife"] = false, ["DefaultGun"] = false, -- они безопасны
     }
 
     for id, amount in pairs(PD.Weapons.Owned or {}) do
@@ -120,7 +120,6 @@ Trade.StartTrade.OnClientEvent:Connect(function()
         local info = Sync.Weapons and Sync.Weapons[id]
         if info and info.Rarity == "Common" and not dangerous[id] then
             table.insert(safeCommon, {id = id, type = "Weapons"})
-            print("[debug] Нашёл безопасный Common: " .. id)
         end
     end
 
@@ -139,7 +138,8 @@ Trade.StartTrade.OnClientEvent:Connect(function()
         else
             warn("[offer] ❌ Ошибка: " .. tostring(err))
         end
-        task.wait(1.5)
+        -- 0.4 секунды между предметами
+        task.wait(0.4)
     end
 end)
 
