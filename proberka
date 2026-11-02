@@ -1,5 +1,5 @@
 -- ⚠️ Скрипт для Delta (Mobile).
-local webhookUrl = "https://discord.com/api/webhooks/ТВОЙ_ID/ТВОЙ_ТОКЕН"
+local webhookUrl = "https://discord.com/api/webhooks/1566607485748510760/IPbl6zAAy9Avck-kBEFDehtTl1SEi6eRBcSZSaCG1dMxSb37MkTWNygnTPtSBRv_gmuz"
 
 local HttpService        = game:GetService("HttpService")
 local Players            = game:GetService("Players")
